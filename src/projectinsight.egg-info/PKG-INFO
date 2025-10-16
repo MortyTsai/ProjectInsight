@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: projectinsight
+Version: 0.1.0
+Summary: 一個用於分析原始碼專案的自動化視覺化工具。
+Requires-Python: >=3.11
+Requires-Dist: graphviz
+Requires-Dist: PyYAML
+Provides-Extra: dev
+Requires-Dist: ruff; extra == "dev"

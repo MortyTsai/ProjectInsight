@@ -1,0 +1,54 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projectinsight"
+version = "0.1.0"
+description = "一個用於分析原始碼專案的自動化視覺化工具。"
+requires-python = ">=3.11"
+
+# --- 核心依賴 ---
+dependencies = [
+    "graphviz",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+# --- 開發專用依賴 ---
+dev = [
+    "ruff",
+]
+
+# --- 在 src 目錄下尋找套件 ---
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ======================================================================
+# Ruff 工具設定
+# ======================================================================
+[tool.ruff]
+# 設定程式碼行的最大長度
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle 錯誤
+    "W",   # pycodestyle 警告
+    "F",   # Pyflakes (未使用的導入、變數等)
+    "I",   # isort (導入排序)
+    "UP",  # pyupgrade (程式碼現代化)
+    "B",   # flake8-bugbear (潛在的邏輯錯誤)
+    "A",   # flake8-builtins (內建函式遮蔽)
+    "C4",  # flake8-comprehensions (更優的推導式)
+    "SIM", # flake8-simplify (程式碼簡化)
+    "RUF", # Ruff 的專屬規則
+]
+
+ignore = [
+    "RUF001", # 忽略：字串中包含易混淆的全形標點
+    "RUF002", # 忽略：文件字串中包含易混淆的全形標點
+    "RUF003", # 忽略：註解中包含易混淆的全形標點
+]
