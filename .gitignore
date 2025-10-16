@@ -4,10 +4,14 @@
 # 虛擬環境
 .venv/
 venv/
+
 # 快取檔案
 __pycache__/
 *.pyc
 .ruff_cache/
+
+# --- Python 套件建置與安裝產物 ---
+*.egg-info/
 
 # --- IDE ---
 # PyCharm
@@ -18,6 +22,7 @@ __pycache__/
 # --- ProjectInsight ---
 # 工具生成的輸出檔案
 output/
+
 # 忽略所有本地設定檔，只追蹤範本
 configs/*.yaml
 !configs/*.template.yaml
