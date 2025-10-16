@@ -19,7 +19,7 @@ ProjectInsight 是一個輕量級的自動化靜態程式碼分析與視覺化�
 
 以下是使用 ProjectInsight 分析 [MoshouSapient](https://github.com/MortyTsai/Moshou_Sapient) 專案生成的模組依賴圖：
 
-*(請在 GitHub 編輯器中，將您生成的 PNG 圖片直接拖曳到此處)*
+<img width="2020" height="3820" alt="moshousapient_dependencies" src="https://github.com/user-attachments/assets/e07b526a-0574-40ba-813a-fd90fe146fc5" />
 
 ## 環境準備
 
