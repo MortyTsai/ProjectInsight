@@ -26,7 +26,7 @@ INCLUDED_EXTENSIONS: set[str] = {
 # 要完全忽略的目錄名稱
 EXCLUDED_DIRS: set[str] = {
     "__pycache__", ".git", ".vscode", ".idea", "venv", ".venv",
-    "dist", "build", "output", "projectinsight.egg-info"
+    "dist", "build", "output", ".ruff_cache", "projectinsight.egg-info"
 }
 # 要完全忽略的特定檔案名稱
 EXCLUDED_FILES: set[str] = set()
