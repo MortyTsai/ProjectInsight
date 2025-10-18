@@ -23,6 +23,10 @@ output/
 # 快照工具生成的檔案
 ProjectInsight_snapshot.txt
 
-# 忽略所有本地設定檔，只追蹤範本
-configs/*.yaml
-!configs/*.template.yaml
+# 忽略所有本地專案設定檔，只追蹤範本
+configs/projects/*.yaml
+!configs/templates/*.template.yaml
+
+# 忽略本地工作區設定，只追蹤範本
+configs/workspace.yaml
+!configs/workspace.template.yaml
