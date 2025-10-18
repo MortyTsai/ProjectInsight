@@ -1,0 +1,84 @@
+# configs/templates/project.template.yaml
+# ======================================================================
+# ProjectInsight - 專案分析設定範本
+# ======================================================================
+# 說明:
+# 1. 將此檔案複製到 'configs/projects/' 目錄下，並為您的專案重新命名
+#    (例如 'my_awesome_project.yaml')。
+# 2. 在 'configs/workspace.yaml' 的 'active_projects' 列表中引用您的新檔名
+#    以啟用此設定。
+# 3. 所有路徑設定都是相對於本設定檔所在的 'projects/' 目錄。
+#    推薦使用正斜線 '/'，它在所有作業系統上都能正常工作。
+# ======================================================================
+
+# --- 專案基礎設定 ---
+# [必要] 要分析的目標專案的原始碼根目錄。
+# 範例: 假設 ProjectInsight 和 OtherProject 在同一層級
+# ProjectInsight/
+# OtherProject/
+#   └── src/
+#       └── package_name/
+target_src_path: "../../../OtherProject/src/package_name"
+
+# [必要] 目標專案的根套件名稱。
+# 這將作為過濾內部/外部依賴和呼叫的基準。
+root_package_name: "package_name"
+
+# --- 輸出設定 ---
+# [可選] 生成圖表的輸出目錄。
+# 建議為每個專案設定獨立的輸出目錄以避免混亂。
+output_dir: "../../output/package_name"
+
+# ======================================================================
+# 分析類型與視覺化選項
+# ======================================================================
+
+# --- 分析類型 ---
+# [必要] 指定要執行的分析類型。
+# - 'dependency':   (預設) 產生模組依賴關係圖，展示模組間的 import 關係。
+# - 'control_flow': 產生函式/方法級別的控制流圖，展示函式間的呼叫關係。
+analysis_type: "dependency"
+
+# --- 視覺化設定 ---
+visualization:
+  # --- 模組依賴圖 ('dependency') 的專屬設定 ---
+  dependency_graph:
+    # 可選值:
+    # - 'dot':  (預設) 層級佈局，適合中小型專案，能清晰展示架-構分層。
+    # - 'sfdp': 力導向佈局，適合大型複雜專案，能更好地利用空間，但會忽略架構分層。
+    layout_engine: "dot"
+
+  # --- 控制流圖 ('control_flow') 的專屬設定 ---
+  control_flow_graph:
+    # 可選值:
+    # - 'dot':  (預設) 從上到下的層級佈局，適合追蹤呼叫鏈。
+    # - 'sfdp': 力導向佈局，適合展示複雜的函式間互動關係。
+    layout_engine: "dot"
+
+    # 是否顯示模組內部的函式呼叫。
+    # 設為 false 可以讓圖表更簡潔，專注於模組間的互動。
+    show_internal_calls: true
+
+# ======================================================================
+# 架構定義 (可選)
+# ======================================================================
+# 說明:
+# - 用於定義圖表的顏色、佈局和圖例。
+# - key: 您專案中的頂層子套件名稱 (例如 'core', 'services')。
+# - name: 將顯示在圖例中的中文名稱。
+# - color: 該層級的背景顏色 (十六進位碼)。
+# - rank: 佈局層級 (僅在依賴圖的 'dot' 引擎下生效)。
+#         可選值: 'control' (最左側), 'application' (中間), 'infrastructure' (最右側)。
+architecture_layers:
+  core:
+    name: "核心層"
+    color: "#FFDDC1"
+    rank: "control"
+  services:
+    name: "服務層"
+    color: "#D1FFC1"
+    rank: "infrastructure"
+  utils:
+    name: "工具層"
+    color: "#CCCCCC"
+    rank: "infrastructure"
