@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "projectinsight"
-version = "0.1.0"
+version = "0.2.0"
 description = "一個用於分析原始碼專案的自動化視覺化工具。"
 requires-python = ">=3.11"
 
@@ -14,6 +14,7 @@ requires-python = ">=3.11"
 dependencies = [
     "graphviz",
     "PyYAML",
+    "jedi",
 ]
 
 [project.optional-dependencies]
