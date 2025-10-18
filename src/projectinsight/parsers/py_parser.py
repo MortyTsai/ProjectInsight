@@ -1,47 +1,63 @@
 # src/projectinsight/parsers/py_parser.py
 """
-提供基於 AST (抽象語法樹) 的 Python 原始碼解析功能。
-
-此模組負責將 .py 檔案轉換為結構化的節點與依賴關係。
+提供基於 AST 的 Python 原始碼依賴解析功能。
 """
-
 # 1. 標準庫導入
 import ast
 import logging
 from pathlib import Path
+from typing import Any
+
+# 2. 第三方庫導入
+# (無)
+
+# 3. 本專案導入
+# (無)
 
 
-def analyze_dependencies(file_path: Path) -> list[str]:
+def analyze_dependencies(file_path: Path) -> dict[str, list[Any]]:
     """
-    解析單一 Python 檔案，找出其 import 的模組。
-
-    Args:
-        file_path: 要分析的 Python 檔案路徑。
-
-    Returns:
-        一個包含所有導入模組名稱的字串列表。
+    解析單一 Python 檔案，找出其導入語句、公開類別和公開函式。
     """
-    logging.debug(f"正在解析檔案: {file_path}")
-    dependencies = set()
+    logging.debug(f"正在解析依賴: {file_path}")
+    imports: list[dict[str, Any]] = []
+    classes: list[str] = []
+    functions: list[str] = []
+
     try:
         with open(file_path, encoding="utf-8") as source:
-            tree = ast.parse(source.read(), filename=file_path.name)
-    except SyntaxError as e:
-        logging.warning(f"無法解析檔案 {file_path}，存在語法錯誤: {e}")
-        return []
+            content = source.read()
+            tree = ast.parse(content, filename=file_path.name)
     except Exception as e:
-        logging.error(f"讀取或解析檔案 {file_path} 時發生未預期錯誤: {e}")
-        return []
+        logging.warning(f"讀取或解析檔案 {file_path} 時發生錯誤: {e}")
+        return {"imports": [], "classes": [], "functions": []}
+
+    # 動態地為 AST 節點添加父節點引用
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                dependencies.add(alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            if node.level > 0:
-                relative_prefix = "." * node.level
-                dependencies.add(f"{relative_prefix}{node.module}")
-            else:
-                dependencies.add(node.module)
+                imports.append({"type": "direct", "module": alias.name})
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "__future__":
+                continue
+            symbols = [alias.name for alias in node.names]
+            imports.append({
+                "type": "from", "module": node.module or "",
+                "level": node.level, "symbols": symbols
+            })
+        elif isinstance(node, ast.ClassDef) and not node.name.startswith('_') and \
+             hasattr(node, 'parent') and isinstance(node.parent, ast.Module):
+            classes.append(node.name)
+        elif isinstance(node, ast.FunctionDef) and not node.name.startswith('_') and \
+             hasattr(node, 'parent') and isinstance(node.parent, ast.Module):
+            functions.append(node.name)
 
-    return sorted(dependencies)
+    return {
+        "imports": imports,
+        "classes": sorted(classes),
+        "functions": sorted(functions),
+    }
