@@ -26,21 +26,16 @@ ProjectInsight 是一個輕量級的自動化靜態程式碼分析與視覺化�
 以下是使用 ProjectInsight 分析 [MoshouSapient](https://github.com/MortyTsai/Moshou_Sapient) 專案生成的圖表示例。
 
 <details>
-<summary><b>點擊展開/摺疊：模組依賴圖 (sfdp 引擎)</b></summary>
+<summary><b>點擊展開/摺疊：模組依賴圖 (dot 引擎)</b></summary>
 
-*這張圖展示了模組間的 `import` 關係，使用 `sfdp` 引擎佈局，節點顏色代表其所屬的架構層級。*
-
-<img width="1200" alt="MoshouSapient Dependency Graph (sfdp)" src="https://github.com/user-attachments/assets/your-new-sfdp-dependency-image-url.png" />
+<img width="2238" height="4543" alt="moshousapient_dependency_dot_dependency_dot" src="https://github.com/user-attachments/assets/14ac2c90-e1bf-4597-b6de-e60daef07e11" />
 </details>
 
 <details>
-<summary><b>點擊展開/摺疊：控制流圖 (dot 引擎, 已過濾內部呼叫)</b></summary>
+<summary><b>點擊展開/摺疊：控制流圖 (sfdp 引擎, 已過濾內部呼叫)</b></summary>
 
-*這張圖展示了函式/方法間的跨模組呼叫關係，使用 `dot` 引擎從上到下佈局，節點被組織在其所屬的模組框內。*
-
-<img width="1200" alt="MoshouSapient Control Flow Graph (dot)" src="https://github.com/user-attachments/assets/your-new-control-flow-image-url.png" />
+<img width="3991" height="3437" alt="moshousapient_flow_sfdp_filtered_control_flow_sfdp" src="https://github.com/user-attachments/assets/0c8abb3f-6399-4044-9d81-61e63b148326" />
 </details>
-
 
 ## 環境準備
 
