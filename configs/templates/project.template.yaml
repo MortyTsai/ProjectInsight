@@ -35,27 +35,19 @@ output_dir: "../../output/package_name"
 
 # --- 分析類型 ---
 # [必要] 指定要執行的分析類型。
-# - 'dependency':   (預設) 產生模組依賴關係圖，展示模組間的 import 關係。
-# - 'control_flow': 產生函式/方法級別的控制流圖，展示函式間的呼叫關係。
-analysis_type: "dependency"
+# - 'component_interaction': (預設) 產生高階組件互動圖，展示類別間的實例化與使用關係。
+analysis_type: "component_interaction"
 
 # --- 視覺化設定 ---
 visualization:
-  # --- 模組依賴圖 ('dependency') 的專屬設定 ---
-  dependency_graph:
-    # 可選值:
-    # - 'dot':  (預設) 層級佈局，適合中小型專案，能清晰展示架-構分層。
-    # - 'sfdp': 力導向佈局，適合大型複雜專案，能更好地利用空間，但會忽略架構分層。
-    layout_engine: "dot"
-
-  # --- 控制流圖 ('control_flow') 的專屬設定 ---
-  control_flow_graph:
+  # --- 高階組件互動圖 ('component_interaction') 的專屬設定 ---
+  component_interaction_graph:
     # 可選值:
     # - 'dot':  (預設) 從上到下的層級佈局，適合追蹤呼叫鏈。
-    # - 'sfdp': 力導向佈局，適合展示複雜的函式間互動關係。
+    # - 'sfdp': 力導向佈局，適合展示複雜的組件間互動關係。
     layout_engine: "dot"
 
-    # 是否顯示模組內部的函式呼叫。
+    # 是否顯示模組內部的組件互動。
     # 設為 false 可以讓圖表更簡潔，專注於模組間的互動。
     show_internal_calls: true
 
@@ -67,18 +59,13 @@ visualization:
 # - key: 您專案中的頂層子套件名稱 (例如 'core', 'services')。
 # - name: 將顯示在圖例中的中文名稱。
 # - color: 該層級的背景顏色 (十六進位碼)。
-# - rank: 佈局層級 (僅在依賴圖的 'dot' 引擎下生效)。
-#         可選值: 'control' (最左側), 'application' (中間), 'infrastructure' (最右側)。
 architecture_layers:
   core:
     name: "核心層"
     color: "#FFDDC1"
-    rank: "control"
   services:
     name: "服務層"
     color: "#D1FFC1"
-    rank: "infrastructure"
   utils:
     name: "工具層"
     color: "#CCCCCC"
-    rank: "infrastructure"
