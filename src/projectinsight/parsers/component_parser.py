@@ -1,7 +1,8 @@
-# src/projectinsight/parsers/flow_parser.py
+# src/projectinsight/parsers/component_parser.py
 """
-提供基於 AST 和 Jedi 的 Python 原始碼控制流解析功能。
+提供基於 AST 和 Jedi 的 Python 原始碼組件互動解析功能。
 """
+
 # 1. 標準庫導入
 import ast
 import logging
@@ -24,6 +25,7 @@ class CodeVisitor(ast.NodeVisitor):
         self.calls: list[tuple[str, ast.Call]] = []
         self.definitions: set[str] = set()
         self.imports: list[ast.AST] = []
+        self.components: set[str] = set()  # 新增：用於儲存識別出的組件（類別）
 
     def visit_Import(self, node: ast.Import):
         self.imports.append(node)
@@ -44,6 +46,7 @@ class CodeVisitor(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef):
         scope_name = ".".join([*self.current_scope, node.name])
         self.definitions.add(scope_name)
+        self.components.add(scope_name)  # 新增：將類別定義視為一個組件
         self.current_scope.append(node.name)
         self.generic_visit(node)
         self.current_scope.pop()
@@ -60,7 +63,7 @@ def _resolve_call(call_node: ast.Call, script: jedi.Script, root_pkg: str) -> se
     try:
         func_node = call_node.func
         line, column = func_node.lineno, func_node.col_offset
-        if isinstance(func_node, ast.Attribute) and hasattr(func_node, 'end_col_offset'):
+        if isinstance(func_node, ast.Attribute) and hasattr(func_node, "end_col_offset"):
             column = func_node.end_col_offset - len(func_node.attr)
 
         definitions = script.infer(line=line, column=column)
@@ -91,7 +94,7 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
     """分析整個專案，提取模組依賴、函式呼叫和模組細節。"""
     jedi_project = jedi.Project(path=str(project_path.parent))
     call_graph: set[tuple[str, str]] = set()
-    dependency_graph: set[tuple[str, str]] = set()
+    all_components: set[str] = set()
     all_module_details: dict[str, dict] = {}
 
     for file_path in py_files:
@@ -104,14 +107,15 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
 
             visitor = CodeVisitor(module_name)
             visitor.visit(tree)
+            all_components.update(visitor.components)
 
             classes = set()
             functions = set()
             for def_path in visitor.definitions:
-                parts = def_path.split('.')
+                parts = def_path.split(".")
                 if len(parts) > 1:
                     is_method = len(parts) > 2 and parts[-2][0].isupper()
-                    is_private = parts[-1].startswith('_')
+                    is_private = parts[-1].startswith("_")
 
                     if not is_method and not is_private:
                         if parts[-1][0].isupper():
@@ -119,33 +123,20 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
                         else:
                             functions.add(parts[-1])
 
-            all_module_details[module_name] = {
-                "classes": sorted(classes),
-                "functions": sorted(functions)
-            }
+            all_module_details[module_name] = {"classes": sorted(classes), "functions": sorted(functions)}
 
             script = jedi.Script(code=content, path=str(file_path), project=jedi_project)
 
             for caller_path, call_node in visitor.calls:
                 definitions = _resolve_call(call_node, script, root_pkg)
                 for d in definitions:
-                    if d.type in ('function', 'class'):
-                        callee_path = f"{d.full_name}.__init__" if d.type == 'class' else d.full_name
+                    if d.type in ("function", "class"):
+                        callee_path = f"{d.full_name}.__init__" if d.type == "class" else d.full_name
                         if callee_path and caller_path != callee_path and caller_path in visitor.definitions:
                             call_graph.add((caller_path, callee_path))
-
-            for import_node in visitor.imports:
-                definitions = _resolve_import(import_node, script, root_pkg)
-                for d in definitions:
-                    if d.type == 'module' and module_name != d.full_name:
-                        dependency_graph.add((module_name, d.full_name))
 
         except Exception as e:
             logging.warning(f"無法分析檔案 {file_path}: {e}")
 
-    logging.info(f"程式碼分析完成：找到 {len(dependency_graph)} 條模組依賴，{len(call_graph)} 條函式呼叫。")
-    return {
-        "call_graph": call_graph,
-        "dependency_graph": dependency_graph,
-        "module_details": all_module_details
-    }
+    logging.info(f"程式碼分析完成：找到 {len(all_components)} 個組件(類別)，{len(call_graph)} 條函式呼叫。")
+    return {"call_graph": call_graph, "components": all_components, "module_details": all_module_details}
