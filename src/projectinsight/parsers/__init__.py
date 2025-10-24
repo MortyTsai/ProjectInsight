@@ -3,8 +3,10 @@
 解析器套件，提供將原始碼轉換為結構化資料的功能。
 """
 
-from . import component_parser
+from . import component_parser, concept_flow_analyzer, seed_discoverer
 
 __all__ = [
     "component_parser",
+    "concept_flow_analyzer",
+    "seed_discoverer",
 ]
