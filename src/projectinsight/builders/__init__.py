@@ -4,7 +4,9 @@
 """
 
 from .component_builder import build_component_graph_data
+from .concept_flow_builder import build_concept_flow_graph_data
 
 __all__ = [
     "build_component_graph_data",
+    "build_concept_flow_graph_data",
 ]
