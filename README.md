@@ -43,7 +43,7 @@ ProjectInsight 是一個專為大型語言模型 (LLM) 設計的靜態程式碼�
 
 *這張圖展示了工具自動發現的核心概念（如 `settings` 物件）以及它們如何在專案中被賦值和傳遞。*
 
-**[請在此處替換為 `moshousapient_auto_concept_flow` 生成的 `sfdp` 圖檔的連結]**
+<img width="4492" height="2384" alt="moshousapient_auto_concept_flow_concept_flow_sfdp" src="https://github.com/user-attachments/assets/338a6ad1-494b-482f-b9ed-036dc10724e3" />
 
 </details>
 
