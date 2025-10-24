@@ -10,6 +10,7 @@ __pycache__/
 .ruff_cache/
 # Python 套件建置與安裝產物
 *.egg-info/
+build/
 
 # --- IDE ---
 # PyCharm
