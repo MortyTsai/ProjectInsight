@@ -1,19 +1,23 @@
 # configs/templates/project.template.yaml
 # ======================================================================
-# ProjectInsight - 專案分析設定範本
+# ProjectInsight - 專案分析設定範本 (v0.3)
 # ======================================================================
 # 說明:
 # 1. 將此檔案複製到 'configs/projects/' 目錄下，並為您的專案重新命名
 #    (例如 'my_awesome_project.yaml')。
 # 2. 在 'configs/workspace.yaml' 的 'active_projects' 列表中引用您的新檔名
 #    以啟用此設定。
-# 3. 所有路徑設定都是相對於本設定檔所在的 'projects/' 目錄。
-#    推薦使用正斜線 '/'，它在所有作業系統上都能正常工作。
 # ======================================================================
 
 # --- 專案基礎設定 ---
 # [必要] 要分析的目標專案的原始碼根目錄。
-# 範例: 假設 ProjectInsight 和 OtherProject 在同一層級
+#
+# [!!] 路徑教學:
+#   - 推薦使用絕對路徑 (例如 "D:/Projects/MyAwesomeProject/src")，以避免任何歧義。
+#   - 也可以使用相對於本設定檔所在 'projects/' 目錄的相對路徑。
+#   - 推薦使用正斜線 '/'，它在所有作業系統上都能正常工作。
+#
+# 範例 (相對路徑):
 # ProjectInsight/
 # OtherProject/
 #   └── src/
@@ -27,18 +31,47 @@ root_package_name: "package_name"
 # --- 輸出設定 ---
 # [可選] 生成圖表的輸出目錄。
 # 建議為每個專案設定獨立的輸出目錄以避免混亂。
+# 路徑是相對於本設定檔所在的 'projects/' 目錄。
 output_dir: "../../output/package_name"
 
 # ======================================================================
-# 分析類型與視覺化選項
+# 分析類型與詳細設定
 # ======================================================================
 
 # --- 分析類型 ---
 # [必要] 指定要執行的分析類型。
-# - 'component_interaction': (預設) 產生高階組件互動圖，展示類別間的實例化與使用關係。
+# 可選值:
+# - 'component_interaction': (預設) 產生高階組件互動圖。
+# - 'concept_flow': (手動模式) 根據下方 'concept_flow' 區塊中手動指定的種子，產生概念流動圖。
+# - 'auto_concept_flow': (自動模式) 自動發現專案中的核心概念實例作為種子，並產生概念流動圖。
 analysis_type: "component_interaction"
 
-# --- 視覺化設定 ---
+# --- (手動) 概念流動圖 ('concept_flow') 的專屬設定 ---
+# 僅在 analysis_type 設定為 'concept_flow' 時生效。
+concept_flow:
+  # [必要] 手動定義要追蹤的概念群組。
+  # 每個群組代表一個您關心的核心「概念」，例如一個設定物件。
+  track_groups:
+    # - group_name: "Settings" # [可選] 為此群組命名，將顯示在圖例中。
+    #   from_object: "your_project.config.settings" # [必要] 指定概念的來源物件 (完全限定名稱)。
+    #   color: "#FFDDC1" # [可選] 此概念在圖表中的顏色。
+    - group_name: "ExampleConcept"
+      from_object: "package_name.core.config.settings"
+      color: "#FFDDC1"
+
+# --- (自動) 概念流動圖 ('auto_concept_flow') 的專屬設定 ---
+# 僅在 analysis_type 設定為 'auto_concept_flow' 時生效。
+auto_concept_flow:
+  # [可選] 排除符合特定模式的 FQN，避免將不重要的全域變數視為種子。
+  # 支援簡單的 '*' 萬用字元，例如 "*_LOGGER" 會排除所有以 "_LOGGER" 結尾的變數。
+  exclude_patterns:
+    - "*_LOGGER"
+    - "*_VERSION"
+    - "API_*"
+
+# ======================================================================
+# 視覺化設定
+# ======================================================================
 visualization:
   # --- 高階組件互動圖 ('component_interaction') 的專屬設定 ---
   component_interaction_graph:
@@ -51,11 +84,17 @@ visualization:
     # 設為 false 可以讓圖表更簡潔，專注於模組間的互動。
     show_internal_calls: true
 
+  # --- 概念流動圖 (手動/自動模式通用) 的專屬設定 ---
+  concept_flow_graph:
+    # 可選值: 'dot', 'sfdp'
+    layout_engine: "dot"
+
 # ======================================================================
 # 架構定義 (可選)
 # ======================================================================
 # 說明:
-# - 用於定義圖表的顏色、佈局和圖例。
+# - 此設定僅對 'component_interaction' 圖表生效。
+# - 用於為不同模組的節點著色，並在圖例中顯示。
 # - key: 您專案中的頂層子套件名稱 (例如 'core', 'services')。
 # - name: 將顯示在圖例中的中文名稱。
 # - color: 該層級的背景顏色 (十六進位碼)。
