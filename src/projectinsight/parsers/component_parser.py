@@ -46,7 +46,7 @@ class CodeVisitor(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef):
         scope_name = ".".join([*self.current_scope, node.name])
         self.definitions.add(scope_name)
-        self.components.add(scope_name)  # 新增：將類別定義視為一個組件
+        self.components.add(scope_name)  # 新增：將類別定義為一個組件
         self.current_scope.append(node.name)
         self.generic_visit(node)
         self.current_scope.pop()
@@ -101,7 +101,9 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
         if file_path.name == "__init__.py":
             continue
         try:
-            module_name = ".".join(file_path.relative_to(project_path.parent).with_suffix("").parts)
+            # [!!] 修正點: 將 project_path.parent 改為 project_path
+            # 這將確保相對路徑從 'src' 目錄開始計算，而不是其父目錄。
+            module_name = ".".join(file_path.relative_to(project_path).with_suffix("").parts)
             content = file_path.read_text(encoding="utf-8")
             tree = ast.parse(content, filename=str(file_path))
 
