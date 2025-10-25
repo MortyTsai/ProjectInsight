@@ -3,10 +3,12 @@
 渲染器套件，負責將圖形資料結構視覺化為圖檔。
 """
 
-from .component_renderer import render_component_graph
-from .concept_flow_renderer import render_concept_flow_graph
+from .component_renderer import generate_component_dot_source, render_component_graph
+from .concept_flow_renderer import generate_concept_flow_dot_source, render_concept_flow_graph
 
 __all__ = [
+    "generate_component_dot_source",
+    "generate_concept_flow_dot_source",
     "render_component_graph",
     "render_concept_flow_graph",
 ]
