@@ -16,18 +16,22 @@ import graphviz
 # (無)
 
 
-def render_concept_flow_graph(
+def generate_concept_flow_dot_source(
     graph_data: dict[str, Any],
-    output_path: Path,
     root_package: str,
-    save_source_file: bool = False,
-    layout_engine: str = "dot",
-):
+    layout_engine: str,
+) -> str:
     """
-    使用 graphviz 將概念流動圖渲染成圖片檔案。
+    生成概念流動圖的 DOT 原始碼字串。
+
+    Args:
+        graph_data: 包含節點和邊的圖形資料字典。
+        root_package: 專案的根套件名稱。
+        layout_engine: Graphviz 佈局引擎 ('dot', 'sfdp', etc.)。
+
+    Returns:
+        DOT 格式的圖形描述字串。
     """
-    output_format = output_path.suffix[1:]
-    source_filepath = output_path.with_suffix(".txt")
     dot = graphviz.Digraph("ConceptFlowGraph")
 
     font_face = 'FACE="Microsoft YaHei"'
@@ -58,14 +62,22 @@ def render_concept_flow_graph(
         for source, target in edges:
             dot.edge(source, target)
 
-    dot_source = dot.source
-    if save_source_file:
-        with open(source_filepath, "w", encoding="utf-8") as f:
-            f.write(dot_source)
-        logging.info(f"DOT 原始檔已儲存為 LLM 友善的 .txt 格式: {source_filepath}")
+    return dot.source
 
-    logging.info(f"準備將圖表渲染至: {output_path}")
-    command = [layout_engine, f"-T{output_format}"]
+
+def render_concept_flow_graph(
+    graph_data: dict[str, Any],
+    output_path: Path,
+    root_package: str,
+    layout_engine: str = "dot",
+):
+    """
+    使用 graphviz 將概念流動圖渲染成圖片檔案。
+    """
+    dot_source = generate_concept_flow_dot_source(graph_data, root_package, layout_engine)
+
+    logging.info(f"準備將概念流動圖渲染至: {output_path}")
+    command = [layout_engine, f"-T{output_path.suffix[1:]}"]
     try:
         process = subprocess.run(
             command, input=dot_source.encode("utf-8"), capture_output=True, check=True, timeout=120
