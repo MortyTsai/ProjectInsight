@@ -94,8 +94,17 @@ def generate_markdown_report(
         report_parts.append(concept_dot)
         report_parts.append("```\n</details>\n")
 
-    # --- 5. 所有原始碼 ---
-    report_parts.append("## 4. 專案完整原始碼")
+    # --- 5. 動態行為圖 ---
+    dynamic_dot = analysis_results.get("dynamic_behavior_dot_source")
+    if dynamic_dot:
+        report_parts.append("## 4. 動態行為圖")
+        report_parts.append("<details>\n<summary>點擊展開/摺疊 DOT 原始碼</summary>\n")
+        report_parts.append("```dot")
+        report_parts.append(dynamic_dot)
+        report_parts.append("```\n</details>\n")
+
+    # --- 6. 所有原始碼 ---
+    report_parts.append("## 5. 專案完整原始碼")
     source_files = _collect_source_files(target_project_root, report_settings)
     for file_path in source_files:
         relative_path = file_path.relative_to(target_project_root).as_posix()
