@@ -22,7 +22,7 @@ from libcst.metadata import (
 )
 
 # 3. 本專案導入
-from .concept_flow_analyzer import _normalize_fqn, temporary_cwd
+from .concept_flow_analyzer import _normalize_fqn
 
 
 class SeedDiscoveryVisitor(cst.CSTVisitor):
@@ -67,26 +67,26 @@ def discover_seeds(
     discovered_fqns: set[str] = set()
 
     logging.info(f"準備自動發現種子: {project_root}")
-    with temporary_cwd(project_root):
-        repo_root = "."
-        file_paths_str = [p.relative_to(project_root).as_posix() for p in py_files]
-        providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
 
+    repo_root = str(project_root.resolve())
+    file_paths_str = [str(p.resolve()) for p in py_files]
+    providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
+
+    try:
+        repo_manager = FullRepoManager(repo_root, file_paths_str, providers)
+        repo_manager.resolve_cache()
+    except Exception as e:
+        logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}")
+        return []
+
+    for file_path_str in file_paths_str:
         try:
-            repo_manager = FullRepoManager(repo_root, file_paths_str, providers)
-            repo_manager.resolve_cache()
+            wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+            visitor = SeedDiscoveryVisitor(wrapper, root_pkg)
+            wrapper.module.visit(visitor)
+            discovered_fqns.update(visitor.discovered_seeds)
         except Exception as e:
-            logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}")
-            return []
-
-        for file_path_str in file_paths_str:
-            try:
-                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-                visitor = SeedDiscoveryVisitor(wrapper, root_pkg)
-                wrapper.module.visit(visitor)
-                discovered_fqns.update(visitor.discovered_seeds)
-            except Exception as e:
-                logging.error(f"在 '{file_path_str}' 中發現種子時失敗: {e}")
+            logging.error(f"在 '{file_path_str}' 中發現種子時失敗: {e}")
 
     logging.info(f"自動發現了 {len(discovered_fqns)} 個潛在的概念種子。")
 
