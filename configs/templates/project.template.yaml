@@ -1,6 +1,6 @@
 # configs/templates/project.template.yaml
 # ======================================================================
-# ProjectInsight - 專案分析設定範本 (v0.5)
+# ProjectInsight - 專案分析設定範本 (v1.0)
 # ======================================================================
 # 說明:
 # 1. 將此檔案複製到 'configs/projects/' 目錄下，並為您的專案重新命名
@@ -9,58 +9,121 @@
 #    以啟用此設定。
 # ======================================================================
 
-# --- 專案基礎設定 ---
+
+# ======================================================================
+# Part 1: 專案基礎設定 (Project Basics)
+# ======================================================================
+# 此區塊用於定義被分析專案的基本資訊。
+# ----------------------------------------------------------------------
+
 # [必要] 要分析的目標專案的「根目錄」。
-# ProjectInsight 將以此路徑為基準，生成檔案樹並收集所有原始碼。
+# ProjectInsight 將以此路徑為基準，掃描所有原始碼並生成檔案樹。
 #
 # [!!] 路徑教學:
-#   - 推薦使用絕對路徑 (例如 "D:/Projects/MyAwesomeProject")，以避免任何歧義。
+#   - 推薦使用絕對路徑 (例如 "D:/Projects/MyAwesomeProject") 以避免任何歧義。
 #   - 也可以使用相對於本設定檔所在 'projects/' 目錄的相對路徑。
 #   - 推薦使用正斜線 '/'，它在所有作業系統上都能正常工作。
 target_project_path: "../../../MyAwesomeProject"
 
 # [必要] 目標專案的根套件名稱。
-# 這將作為過濾內部/外部依賴和呼叫的基準。
-# ProjectInsight 會自動在 target_project_path 下尋找此套件
-# (無論是在根目錄還是在 'src/' 目錄下)。
+# 這是 ProjectInsight 區分「內部程式碼」與「外部函式庫」的關鍵。
+#
+# [!!] 如何尋找:
+#   - 如果您的專案結構是 `MyAwesomeProject/src/my_awesome_package/`，
+#     那麼此處應填寫 "my_awesome_package"。
+#   - 如果您的專案結構是 `MyAwesomeProject/my_awesome_package/`，
+#     同樣填寫 "my_awesome_package"。
+#   - ProjectInsight 會自動在這兩種佈局中尋找此套件。
 root_package_name: "my_awesome_package"
 
-# --- 輸出設定 ---
 # [可選] 生成報告與圖表的輸出目錄。
 # 建議為每個專案設定獨立的輸出目錄以避免混亂。
 # 路徑是相對於本設定檔所在的 'projects/' 目錄。
 output_dir: "../../output/my_awesome_project"
 
-# ======================================================================
-# 分析類型與詳細設定
-# ======================================================================
 
-# --- 分析類型 ---
-# [必要] 指定要在此專案上執行的所有分析類型。
-# 這是一個列表，工具將會依序執行所有指定的分析，並將結果匯總到一份報告中。
+# ======================================================================
+# Part 2: 分析類型與詳細配置 (Analysis Configuration)
+# ======================================================================
+# 此區塊用於選擇要執行的分析類型，並為每種分析提供詳細設定。
+# ----------------------------------------------------------------------
+
+# [必要] 指定要執行的所有分析類型。
+# 這是一個列表，工具將會依序執行，並將結果匯總到一份報告中。
 #
 # 可選值 (可組合使用):
-# - "component_interaction": 產生高階組件互動圖。
-# - "auto_concept_flow": 自動發現專案中的核心概念實例作為種子，並產生概念流動圖。
+# - "component_interaction": 高階組件互動圖。專注於類別與模組級函式之間的「使用」關係，揭示宏觀架構。
+# - "auto_concept_flow":     自動概念流動圖。自動發現專案中的核心物件實例，並追蹤其在系統中的流動。
+# - "dynamic_behavior":      動態行為圖。根據您在下方定義的規則，分析非同步、事件驅動等動態架構模式。
 analysis_types:
   - "component_interaction"
   - "auto_concept_flow"
+  - "dynamic_behavior"
 
-# --- (自動) 概念流動圖 ('auto_concept_flow') 的專屬設定 ---
+# --- 'auto_concept_flow' 的專屬設定 ---
 # 僅在 analysis_types 列表中包含 'auto_concept_flow' 時生效。
 auto_concept_flow:
-  # [可選] 排除符合特定模式的 FQN，避免將不重要的全域變數視為種子。
-  # 支援簡單的 '*' 萬用字元，例如 "*_LOGGER" 會排除所有以 "_LOGGER" 結尾的變數。
+  # [可選] 排除符合特定模式的變數，避免將不重要的全域變數（如日誌記錄器、版本號）視為概念種子。
+  # 支援簡單的 '*' 萬用字元。
   exclude_patterns:
     - "*_LOGGER"
     - "*_VERSION"
     - "API_*"
 
+# --- 'dynamic_behavior' 的專屬設定 ---
+# 僅在 analysis_types 列表中包含 'dynamic_behavior' 時生效。
+dynamic_behavior_analysis:
+  # [可選] 角色視覺化定義。
+  # 在此處定義規則中使用的所有「角色」(如生產者、消費者) 及其視覺屬性。
+  # 這將直接影響最終圖表的圖例和節點顏色。
+  roles:
+    producer:
+      name: "生產者 (Producer)"
+      color: "#FFDDC1" # 淡橙色
+    consumer:
+      name: "消費者 (Consumer)"
+      color: "#C1E1FF" # 淡藍色
+
+  # [必要] 一個規則列表，用於定義專案中需要被識別的各種動態行為模式。
+  rules:
+    # --- 範例: 一個典型的非同步任務佇列模式 ---
+    - rule_name: "Example TaskQueue P/C Pattern"
+      type: "producer_consumer"
+      # [必要] 關聯鍵。這是一個您自定義的邏輯名稱，用於將此規則下的生產者與消費者連結起來。
+      # 只有 correlation_key 相同的生產者和消費者才會被視為一對。
+      correlation_key: "example_task"
+      producer:
+        # [必要] 為此部分分配一個在上面 'roles' 中定義的角色。
+        role: "producer"
+        # [必要] 指定匹配目標的語法結構。
+        # 可選值:
+        #   - "call": 匹配一個函式/方法的呼叫。
+        #   - "dict_creation": 匹配一個字典的創建。
+        #   - "function_entry": 匹配一個函式/方法的定義入口。
+        match_target: "call"
+        # [當 match_target 為 'call' 時必要] 生產者方法的「完全限定名稱」(FQN)。
+        method_fqn: "my_awesome_package.services.queue.add_task"
+        # [必要] 關聯鍵的名稱。
+        # - 對於 'call' 模式, 這是關鍵字參數的名稱。
+        # - 對於 'dict_creation' 模式, 這是字典的鍵 (key)。
+        key_argument: "task_type"
+        # [可選] 如果指定，則只匹配 value 為此字串常值的生產者。
+        value_argument: "example_task"
+      consumer:
+        role: "consumer"
+        match_target: "function_entry"
+        method_fqn: "my_awesome_package.workers.task_processor.process_example_task"
+
+
 # ======================================================================
-# 報告內容設定
+# Part 3: 報告與視覺化設定 (Report & Visualization)
 # ======================================================================
+# 此區塊用於控制最終產出的 Markdown 報告內容和 PNG 圖表的樣式。
+# ----------------------------------------------------------------------
+
+# --- 報告內容設定 ---
 report_settings:
-  # --- 檔案結構樹設定 ---
+  # 檔案結構樹設定
   tree_view:
     # [可選] 在生成檔案樹時要排除的目錄名稱 (支援 '*' 萬用字元)。
     exclude_dirs:
@@ -76,9 +139,9 @@ report_settings:
       - ".ruff_cache"
       - "*.egg-info"
 
-  # --- 原始碼收集設定 ---
+  # 原始碼收集設定
   source_code:
-    # [可選] 要包含在報告中的原始碼檔案的副檔名。
+    # [可選] 要包含在最終報告中的原始碼檔案的副檔名。
     included_extensions:
       - ".py"
       - ".md"
@@ -87,21 +150,31 @@ report_settings:
       - ".gitignore"
       - ".env.example"
 
-# ======================================================================
-# 視覺化設定 (PNG 圖片)
-# ======================================================================
+# --- 視覺化設定 (PNG 圖片) ---
 visualization:
-  # --- 高階組件互動圖 ('component_interaction') 的專屬設定 ---
+  # 高階組件互動圖 ('component_interaction') 的專屬設定
   component_interaction_graph:
+    # [可選] Graphviz 佈局引擎。
+    # 'dot': (預設) 適合層級結構，自上而下佈局。
+    # 'sfdp': 適合大型、複雜的網路圖。
     layout_engine: "dot"
+    # [可選] 是否顯示模組內部的呼叫。
+    # true: 顯示所有呼叫關係。
+    # false: 只顯示跨模組的呼叫，圖表更簡潔。
     show_internal_calls: true
-  # --- 概念流動圖 (手動/自動模式通用) 的專屬設定 ---
+
+  # 概念流動圖 (通用) 的專屬設定
   concept_flow_graph:
+    layout_engine: "sfdp"
+
+  # 動態行為圖 ('dynamic_behavior') 的專屬設定
+  dynamic_behavior_graph:
     layout_engine: "dot"
 
-# ======================================================================
-# 架構定義 (可選)
-# ======================================================================
+# --- 架構定義 (可選) ---
+# 僅對 'component_interaction' 圖生效。
+# 您可以將專案的不同部分對應到特定的架構層級，並為它們指定顏色。
+# 鍵 (如 'core', 'services') 必須對應到您 `root_package_name` 下的子套件名稱。
 architecture_layers:
   core:
     name: "核心層"
