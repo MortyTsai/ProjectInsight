@@ -3,17 +3,16 @@
 ProjectInsight 主執行入口。
 """
 
-# 1. 標準庫導入
 import logging
 import os
 from pathlib import Path
 from typing import Any
 
-# 2. 第三方庫導入
 import yaml
 
-# 3. 本專案導入
-from projectinsight import builders, parsers, renderers, reporters
+from projectinsight import builders, renderers, reporters
+from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
+from projectinsight.semantics import dynamic_behavior_analyzer
 
 
 def process_project(config_path: Path):
@@ -52,7 +51,6 @@ def process_project(config_path: Path):
     output_dir = (config_dir / output_dir_str).resolve()
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- 智慧偵測 Python 原始碼根目錄 (支援 'src' 和非 'src' 佈局) ---
     potential_src_dir = target_project_root / "src"
     if potential_src_dir.is_dir():
         python_source_root = potential_src_dir
@@ -75,7 +73,7 @@ def process_project(config_path: Path):
             layout_engine = comp_graph_config.get("layout_engine", "dot")
             show_internal_calls = comp_graph_config.get("show_internal_calls", True)
 
-            analysis_results = parsers.component_parser.analyze_code(python_source_root, root_package_name, py_files)
+            analysis_results = component_parser.analyze_code(python_source_root, root_package_name, py_files)
             graph_data = builders.build_component_graph_data(
                 call_graph=analysis_results["call_graph"],
                 all_components=analysis_results.get("components", set()),
@@ -100,13 +98,13 @@ def process_project(config_path: Path):
             if analysis_type == "auto_concept_flow":
                 auto_concept_config = config.get("auto_concept_flow", {})
                 exclude_patterns = auto_concept_config.get("exclude_patterns", [])
-                track_groups = parsers.seed_discoverer.discover_seeds(
+                track_groups = seed_discoverer.discover_seeds(
                     root_pkg=root_package_name,
                     py_files=py_files,
                     project_root=python_source_root,
                     exclude_patterns=exclude_patterns,
                 )
-            else:  # concept_flow
+            else:
                 concept_flow_config = config.get("concept_flow", {})
                 track_groups = concept_flow_config.get("track_groups", [])
 
@@ -117,7 +115,7 @@ def process_project(config_path: Path):
             concept_flow_graph_config = vis_config.get("concept_flow_graph", {})
             layout_engine = concept_flow_graph_config.get("layout_engine", "dot")
 
-            analysis_results = parsers.concept_flow_analyzer.analyze_concept_flow(
+            analysis_results = concept_flow_analyzer.analyze_concept_flow(
                 root_pkg=root_package_name,
                 py_files=py_files,
                 track_groups=track_groups,
@@ -133,10 +131,40 @@ def process_project(config_path: Path):
                 root_package=root_package_name,
                 layout_engine=layout_engine,
             )
+
+        elif analysis_type == "dynamic_behavior":
+            dynamic_behavior_config = config.get("dynamic_behavior_analysis", {})
+            rules = dynamic_behavior_config.get("rules", [])
+            roles = dynamic_behavior_config.get("roles", {})
+            if not rules:
+                logging.warning("在 'dynamic_behavior' 分析中未找到任何規則，已跳過。")
+                continue
+
+            graph_config = vis_config.get("dynamic_behavior_graph", {})
+            layout_engine = graph_config.get("layout_engine", "dot")
+
+            analysis_results = dynamic_behavior_analyzer.analyze_dynamic_behavior(
+                py_files=py_files,
+                rules=rules,
+                project_root=python_source_root,
+            )
+            graph_data = builders.build_dynamic_behavior_graph_data(analysis_results)
+            dot_source = renderers.generate_dynamic_behavior_dot_source(
+                graph_data, root_package_name, layout_engine, roles
+            )
+            report_analysis_results["dynamic_behavior_dot_source"] = dot_source
+            png_output_path = output_dir / f"{project_name}_dynamic_behavior_{layout_engine}.png"
+            renderers.render_dynamic_behavior_graph(
+                graph_data=graph_data,
+                output_path=png_output_path,
+                root_package=root_package_name,
+                layout_engine=layout_engine,
+                roles_config=roles,
+            )
+
         else:
             logging.error(f"未知的分析類型: '{analysis_type}'。")
 
-    # --- 生成最終的 Markdown 報告 ---
     if report_analysis_results:
         report_output_path = output_dir / f"{project_name}_InsightReport.md"
         reporters.generate_markdown_report(
