@@ -56,7 +56,6 @@ def generate_tree_structure(
             return any(fnmatch.fnmatch(path_name, pattern) for pattern in exclude_dirs)
 
         try:
-            # 過濾掉不應包含的目錄
             items = sorted([p for p in directory.iterdir() if not is_excluded(p.name)], key=lambda p: p.is_file())
         except OSError:
             return

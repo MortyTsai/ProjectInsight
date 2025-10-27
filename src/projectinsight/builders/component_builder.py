@@ -24,7 +24,6 @@ def _get_node_for_path(full_path: str, all_components: set[str]) -> str:
         potential_component = ".".join(parts[:i])
         if potential_component in all_components:
             return potential_component
-    # 如果找不到所屬的組件，則它本身就是一個節點（模組級函式）
     return full_path
 
 
@@ -49,7 +48,6 @@ def build_component_graph_data(
     if not show_internal_calls:
         filtered_edges = set()
         for caller, callee in component_edges:
-            # 如果 caller 和 callee 的模組路徑不同，則保留
             caller_module = ".".join(caller.split(".")[:-1])
             callee_module = ".".join(callee.split(".")[:-1])
             if caller_module != callee_module:

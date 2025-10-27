@@ -22,10 +22,7 @@ def _get_node_color(node_name: str, root_package: str, layer_info: dict[str, dic
     根據節點 FQN 所屬的架構層級獲取顏色。
     """
     default_color = "#E6F7FF"
-    # 遍歷所有定義的架構層 (例如 'core', 'services')
     for layer_key, info in layer_info.items():
-        # 檢查節點名稱是否以 '專案根套件.架構層' 開頭
-        # 例如 moshousapient.services.s3_service.S3Service 是否以 moshousapient.services 開頭
         prefix = f"{root_package}.{layer_key}"
         if node_name.startswith(prefix):
             return info.get("color", default_color)
