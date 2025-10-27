@@ -2,7 +2,7 @@
 
 ![Project Status: Active Dev](https://img.shields.io/badge/status-active%20development-green) ![Python Version](https://img.shields.io/badge/python-3.11+-blue) ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-ProjectInsight 是一個專為大型語言模型 (LLM) 設計的靜態程式碼分析預處理器。它的核心使命是**一鍵將一個複雜的 Python 專案，轉化為一份單一、完整、高度濃縮的 Markdown 上下文報告**。這份報告旨在讓 LLM 在幾秒鐘內，宏觀地洞察一個陌生專案的核心架構、關鍵概念流動路徑與完整程式碼，為後續的開發、重構或程式碼審查任務提供完美的上下文基礎。
+ProjectInsight 是一個專為大型語言模型 (LLM) 設計的混合式程式碼分析預處理器。它的核心使命是**一鍵將一個複雜的 Python 專案，轉化為一份單一、完整、高度濃縮的 Markdown 上下文報告**。這份報告旨在讓 LLM 能夠宏觀地洞察一個陌生專案的靜態架構、動態行為模式與關鍵概念流動，為後續的開發、重構或程式碼審查任務提供堅實的上下文基礎。
 
 ## 核心特性
 
@@ -12,23 +12,23 @@ ProjectInsight 是一個專為大型語言模型 (LLM) 設計的靜態程式碼�
 -   **多維度高階分析**:
     -   **高階組件互動圖**: 專注於分析類別（組件）與模組級函式之間的「使用」關係，揭示專案的真實架構藍圖，而非雜亂的函式呼叫鏈。
     -   **概念流動圖**: 追蹤關鍵物件實例（如設定物件、服務單例）在專案中的賦值與傳遞，揭示核心資料的生命週期。
+    -   **(新) 動態行為圖**: 透過在設定檔中定義語義規則，使分析器能夠識別並視覺化非同步、事件驅動的架構模式（如生產者-消費者模型），揭示程式碼的執行「意圖」。
 
 -   **LLM 友善的圖表抽象**:
     -   **DOT 語言核心**: 所有圖表都首先被抽象為 Graphviz 的 DOT 語言。這種結構化的文字表示極易被 LLM 解析和理解，遠勝於直接分析程式碼。
     -   **視覺化為輔**: 生成的 `.png` 圖檔僅作為開發過程中的除錯與驗證工具，是一個獨立且次要的產出。
 
 -   **智慧與靈活的分析能力**:
-    -   **自動種子發現**: `auto_concept_flow` 模式能夠自動掃描專案，並根據啟發式規則（如模組頂層的類別實例化）識別出潛在的核心「概念」，無需使用者手動指定。
+    -   **設定檔驅動**: 所有分析類型、報告內容、視覺化樣式，乃至複雜的動態行為規則，均可透過 `yaml` 檔案進行精細配置，使工具能適應不同專案的獨特架構。
+    -   **自動種子發現**: `auto_concept_flow` 模式能夠自動掃描專案，並根據啟發式規則識別出潛在的核心「概念」，無需使用者手動指定。
     -   **支援主流專案佈局**: 自動偵測專案是採用 `src` 佈局還是扁平佈局，無需額外設定。
-    -   **架構層級著色**: 透過在設定檔中定義，可為不同架構層級的組件賦予不同顏色，直觀反映架構意圖。
 
 -   **高度可配置的工作區**:
     -   透過簡單的 `workspace.yaml` 即可管理和批次執行多個專案分析任務。
-    -   所有路徑 (`target_project_path`)、分析類型 (`analysis_types`)、報告內容 (`report_settings`) 均可透過 YAML 進行精細配置。
 
 ## 產出範例
 
-ProjectInsight 的核心產出是一份結構化的、對讀者友善的 Markdown 檔案，其結構如下所示：
+ProjectInsight 的核心產出是一份結構化的 Markdown 檔案，其結構如下所示：
 
 <details>
 <summary><b>點擊展開/摺疊：查看完整的報告結構範例</b></summary>
@@ -36,7 +36,7 @@ ProjectInsight 的核心產出是一份結構化的、對讀者友善的 Markdow
 ```markdown
 # ProjectInsight 分析報告: moshousapient_full_report
 
-**分析時間**: 2025-10-26 01:30:00
+**分析時間**: 2025-10-27 01:00:00
 
 ## 1. 專案結構總覽
 
@@ -46,17 +46,13 @@ ProjectInsight 的核心產出是一份結構化的、對讀者友善的 Markdow
 ` ` `
 moshousapient/
 ├── configs
-│   ├── behavior_config.py
 │   └── ...
 ├── src
 │   └── moshousapient
 │       ├── core
-│       │   ├── app_orchestrator.py
 │       │   └── ...
 │       └── ...
-├── .env.example
-├── pyproject.toml
-└── README.md
+└── ...
 ` ` `
 
 </details>
@@ -68,10 +64,7 @@ moshousapient/
 
 ` ` `dot
 digraph ComponentInteractionGraph {
-    fontname="Microsoft YaHei"
     // ... DOT 原始碼 ...
-    "moshousapient.core.app_orchestrator.main" -> "moshousapient.services.database_service.init_db";
-    // ...
 }
 ` ` `
 
@@ -84,38 +77,34 @@ digraph ComponentInteractionGraph {
 
 ` ` `dot
 digraph ConceptFlowGraph {
-    fontname="Microsoft YaHei"
     // ... DOT 原始碼 ...
-    "moshousapient.configs.settings_config.settings" -> "moshousapient.core.app_orchestrator.settings";
+}
+` ` `
+
+</details>
+
+## 4. 動態行為圖
+
+<details>
+<summary>點擊展開/摺疊 DOT 原始碼</summary>
+
+` ` `dot
+digraph DynamicBehaviorGraph {
+    // ... DOT 原始碼 ...
+    "moshousapient.services.ingestion_service.IngestionService.handle_new_file" -> "moshousapient.jobs.queue_inference_job.main" [label=file_inference_task];
     // ...
 }
 ` ` `
 
 </details>
 
-## 4. 專案完整原始碼
-
-<details>
-<summary><code>configs/behavior_config.py</code></summary>
-
-` ` `python
-# configs/behavior_config.py
-"""
-管理應用程式的所有行為設定。
-"""
-# ... 檔案內容 ...
-` ` `
-
-</details>
+## 5. 專案完整原始碼
 
 <details>
 <summary><code>src/moshousapient/core/app_orchestrator.py</code></summary>
 
 ` ` `python
 # src/moshousapient/core/app_orchestrator.py
-"""
-應用程式的主協調器。
-"""
 # ... 檔案內容 ...
 ` ` `
 
@@ -158,7 +147,7 @@ digraph ConceptFlowGraph {
     -   打開 `my_project.yaml`，根據檔案內的教學式註解，修改以下核心參數：
         -   `target_project_path`: 指向您要分析的專案的**根目錄**。
         -   `root_package_name`: 您專案的根套件名稱。
-        -   `analysis_types`: 一個列表，填入您想執行的所有分析類型（例如 `component_interaction`, `auto_concept_flow`）。
+        -   `analysis_types`: 選擇您想執行的所有分析類型。
 
 2.  **設定工作區**
     -   將 `configs/workspace.template.yaml` 複製為 `workspace.yaml`。
@@ -175,14 +164,17 @@ digraph ConceptFlowGraph {
 
 ## 發展藍圖
 
--   [x] **(舊) 詳細模組依賴圖**: 已被移除，確認為對 LLM 的雜訊。
--   [x] **(舊) 函式級控制流圖**: 已被移除，確認為對 LLM 的雜訊。
--   [x] **核心功能：高階組件互動圖**: 成功實現了將原始碼抽象為類別與模組級函式互動關係的核心功能。
--   [x] **核心功能：概念流動圖 (MVP)**: 成功實現了自動發現和追蹤關鍵物件實例在專案中流動路徑的 MVP 功能。
--   [x] **核心功能：統一 Markdown 報告生成器**: 成功重構專案，使其能夠生成包含多種分析結果和完整原始碼的單一 Markdown 報告。
--   [ ] **擴展分析維度**:
-    -   [ ] **YAML 感知分析**: 實現對 `.yaml` 等設定檔的解析，建立從設定源頭到程式碼使用的端到端追蹤鏈。
-    -   [ ] **增強概念流動分析**: 提升分析深度，以追蹤更複雜的概念傳遞模式（如函式回傳、字典賦值等）。
--   [ ] **可用性與智慧化增強**:
-    -   [ ] **增強種子發現**: 擴展 `auto_concept_flow` 的啟發式規則，使其能夠識別在函式內部實例化的核心物件，而不僅僅是全域變數。
-    -   [ ] **視覺化微調**: 允許使用者在設定檔中指定圖表的尺寸 (`size`) 和長寬比 (`ratio`)。
+-   [x] **(舊) 模組依賴圖與函式級控制流圖**: 已被移除，確認為對 LLM 的低層次雜訊。
+-   [x] **核心功能：高階組件互動圖**: 實現了將原始碼抽象為類別與模組級函式互動關係的核心功能。
+-   [x] **核心功能：概念流動圖 (MVP)**: 實現了自動發現和追蹤關鍵物件實例在專案中流動路徑的 MVP 功能。
+-   [x] **核心功能：統一 Markdown 報告生成器**: 重構專案，使其能夠生成包含多種分析結果和完整原始碼的單一 Markdown 報告。
+-   [x] **核心功能：動態行為感知器 (MVP)**: 成功實現了一個由設定檔驅動的語義分析框架，能夠識別並視覺化使用者定義的動態架構模式（如生產者-消費者）。
+
+-   [ ] **(下一階段) 核心功能：端到端概念追蹤**:
+    -   **目標**: 將「概念流動圖」與「動態行為圖」進行深度融合，實現一個能夠跨越技術邊界（如資料庫、任務佇列、序列化）的「超級概念流動圖」。
+    -   **願景**: 讓分析器能夠理解 `pickle.dumps`、`queue.put` 等操作的語義，從而生成從設定檔到最終消費者、真正端到端的完整資料生命週期圖。
+
+-   [ ] **(長期) 智慧化與易用性增強**:
+    -   [ ] **自主探索外掛**: 為業界主流函式庫（如 Celery, Dramatiq）開發內建的語義分析規則，減少使用者手動編寫 `dynamic_behavior` 規則的負擔。
+    -   [ ] **YAML 感知分析**: 實現對 `.yaml` 等設定檔的解析，將其作為概念的源頭納入分析圖中。
+    -   [ ] **規則驗證與除錯模式**: 增加對 `yaml` 規則的預檢查功能，並提供一個「除錯模式」，以幫助使用者快速定位設定錯誤。
