@@ -106,7 +106,6 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
             content = file_path.read_text(encoding="utf-8")
             tree = ast.parse(content, filename=str(file_path))
 
-            # [核心修正] 捕獲模組級的 Docstring
             module_docstring = ast.get_docstring(tree)
             if module_docstring:
                 full_docstring_map[module_name] = module_docstring
