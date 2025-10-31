@@ -23,20 +23,16 @@ def _get_node_color(node_name: str, root_package: str, layer_info: dict[str, dic
     """
     [最終修正] 根據節點 FQN 所屬的架構層級（包括根層級）獲取顏色。
     """
-    # 優先匹配所有具體的子套件層級
     for layer_key, info in layer_info.items():
         if layer_key == "(root)":
             continue
-        # [核心修正] 加上結尾的點，確保只匹配子套件內部的模組
         prefix = f"{root_package}.{layer_key}."
         if node_name.startswith(prefix):
             return info.get("color", "#E6F7FF")
 
-    # 如果沒有匹配到任何子套件，則回退到根層級的定義
     if "(root)" in layer_info:
         return layer_info["(root)"].get("color", "#E6F7FF")
 
-    # 作為最終的保險
     return "#E6F7FF"
 
 
