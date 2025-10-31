@@ -18,18 +18,15 @@ def _get_component_for_path(full_path: str, all_components: set[str], all_defini
     """
     [最終修正] 確定一個 FQN 應歸屬到的高階組件（類別或公開的模組級函式）。
     """
-    # 優先判斷是否為某個已知類別的成員
     parts = full_path.split(".")
     for i in range(len(parts) - 1, 0, -1):
         potential_component = ".".join(parts[:i])
         if potential_component in all_components:
             return potential_component
 
-    # 如果不是類別成員，檢查它自身是否就是一個已知的頂層定義（模組級函式）
     if full_path in all_definitions:
         return full_path
 
-    # 如果以上都不是（例如，它是一個巢狀的私有函式），則不返回任何組件
     return None
 
 
