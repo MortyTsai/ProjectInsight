@@ -69,15 +69,17 @@ def render_concept_flow_graph(
     graph_data: dict[str, Any],
     output_path: Path,
     root_package: str,
-    layout_engine: str = "dot",
+    layout_engine: str = "sfdp",
+    dpi: str = "200",
 ):
     """
     使用 graphviz 將概念流動圖渲染成圖片檔案。
     """
     dot_source = generate_concept_flow_dot_source(graph_data, root_package, layout_engine)
 
-    logging.info(f"準備將概念流動圖渲染至: {output_path}")
-    command = [layout_engine, f"-T{output_path.suffix[1:]}"]
+    logging.info(f"準備將概念流動圖渲染至: {output_path} (DPI: {dpi})")
+    # [核心修改] 將 DPI 設定作為圖屬性傳遞給命令列
+    command = [layout_engine, f"-T{output_path.suffix[1:]}", f"-Gdpi={dpi}"]
     try:
         process = subprocess.run(
             command, input=dot_source.encode("utf-8"), capture_output=True, check=True, timeout=120
