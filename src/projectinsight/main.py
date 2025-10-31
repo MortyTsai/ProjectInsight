@@ -57,16 +57,12 @@ def _generate_color_palette(num_colors: int) -> list[str]:
     [新增] 使用黃金比例演算法生成一個視覺上可區分的、和諧的調色盤。
     """
     palette = []
-    # 使用黃金比例的共軛數
     golden_ratio_conjugate = 0.61803398875
-    # 從一個隨機的起始色相開始，以增加每次運行的變化性
     hue = 0.7
     for _ in range(num_colors):
         hue += golden_ratio_conjugate
         hue %= 1
-        # [核心修正] 降低亮度，提高飽和度，以獲得更鮮豔的顏色
         rgb_float = colorsys.hls_to_rgb(hue, 0.9, 0.9)
-        # 將 0-1 的浮點數轉換為 0-255 的整數，並格式化為 HEX 字串
         rgb_int = tuple(int(c * 255) for c in rgb_float)
         palette.append(f"#{rgb_int[0]:02x}{rgb_int[1]:02x}{rgb_int[2]:02x}")
     return palette
@@ -151,11 +147,10 @@ def process_project(config_path: Path):
     user_provided_layers = config.get("architecture_layers", {})
     architecture_layers = {**auto_discovered_layers, **user_provided_layers}
 
-    # [核心修正] 為根層級注入一個明確的、中性的定義
     if "(root)" not in architecture_layers:
         architecture_layers["(root)"] = {
             "name": f"{root_package_name} (root)",
-            "color": "#EAEAEA",  # 一個清晰、中性的淺灰色
+            "color": "#EAEAEA",
         }
 
     logging.info(f"專案報告根目錄: {target_project_root}")
