@@ -58,7 +58,7 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
                 try:
                     fqns = self.get_metadata(FullyQualifiedNameProvider, current)
                     if fqns:
-                        return list(fqns)[0].name
+                        return next(iter(fqns)).name
                 except Exception:
                     return "unknown.scope.resolution.error"
             try:
@@ -71,7 +71,6 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
         """處理一個成功的匹配。"""
         correlation_key = rule.get("correlation_key")
         target_fqn = config.get("method_fqn", config.get("match_target"))
-        caller_fqn: str
         role = config.get("role")
 
         if not role:
@@ -79,10 +78,7 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
             return
 
         match_target = config.get("match_target")
-        if match_target == "function_entry":
-            caller_fqn = target_fqn
-        else:
-            caller_fqn = self._get_enclosing_function_fqn(node)
+        caller_fqn = target_fqn if match_target == "function_entry" else self._get_enclosing_function_fqn(node)
 
         try:
             position = self.get_metadata(PositionProvider, node)
@@ -100,7 +96,9 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
         }
         if finding not in self.findings:
             self.findings.append(finding)
-            logging.info(f"  [{role.capitalize()}發現] 在 {caller_fqn} (行: {line_number}) 發現 '{correlation_key}' 的事件。")
+            logging.info(
+                f"  [{role.capitalize()}發現] 在 {caller_fqn} (行: {line_number}) 發現 '{correlation_key}' 的事件。"
+            )
 
     @staticmethod
     def _build_matcher(config: dict[str, Any]) -> BaseMatcherNode | None:
@@ -185,12 +183,23 @@ def analyze_dynamic_behavior(
             findings_by_rule_key[key] = {"producer": [], "consumer": []}
         findings_by_rule_key[key][f["role"]].append(f)
 
-    for key, groups in findings_by_rule_key.items():
+    for _key, groups in findings_by_rule_key.items():
         for p in groups["producer"]:
             for c in groups["consumer"]:
-                links.append({"source": p["caller_fqn"], "target": c["caller_fqn"], "label": p["correlation_key"], "producer_info": p, "consumer_info": c})
+                links.append(
+                    {
+                        "source": p["caller_fqn"],
+                        "target": c["caller_fqn"],
+                        "label": p["correlation_key"],
+                        "producer_info": p,
+                        "consumer_info": c,
+                    }
+                )
 
     producer_count = sum(len(g["producer"]) for g in findings_by_rule_key.values())
     consumer_count = sum(len(g["consumer"]) for g in findings_by_rule_key.values())
-    logging.info(f"動態行為分析完成：發現 {producer_count} 個生產者實例，{consumer_count} 個消費者實例，建立了 {len(links)} 條連結。")
+    logging.info(
+        f"動態行為分析完成：發現 {producer_count} 個生產者實例，"
+        f"{consumer_count} 個消費者實例，建立了 {len(links)} 條連結。"
+    )
     return {"links": links}
