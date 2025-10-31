@@ -26,6 +26,8 @@ class CodeVisitor(ast.NodeVisitor):
         self.definitions: set[str] = set()
         self.imports: list[ast.AST] = []
         self.components: set[str] = set()
+        self.definition_to_module_map: dict[str, str] = {}
+        self.docstring_map: dict[str, str] = {}
 
     def visit_Import(self, node: ast.Import):
         self.imports.append(node)
@@ -39,6 +41,12 @@ class CodeVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef):
         scope_name = ".".join([*self.current_scope, node.name])
         self.definitions.add(scope_name)
+        self.definition_to_module_map[scope_name] = self.module_path
+
+        docstring = ast.get_docstring(node)
+        if docstring:
+            self.docstring_map[scope_name] = docstring
+
         self.current_scope.append(node.name)
         self.generic_visit(node)
         self.current_scope.pop()
@@ -47,6 +55,12 @@ class CodeVisitor(ast.NodeVisitor):
         scope_name = ".".join([*self.current_scope, node.name])
         self.definitions.add(scope_name)
         self.components.add(scope_name)
+        self.definition_to_module_map[scope_name] = self.module_path
+
+        docstring = ast.get_docstring(node)
+        if docstring:
+            self.docstring_map[scope_name] = docstring
+
         self.current_scope.append(node.name)
         self.generic_visit(node)
         self.current_scope.pop()
@@ -75,55 +89,33 @@ def _resolve_call(call_node: ast.Call, script: jedi.Script, root_pkg: str) -> se
     return resolved_items
 
 
-def _resolve_import(import_node: ast.AST, script: jedi.Script, root_pkg: str) -> set[Any]:
-    """使用 Jedi 解析一個 AST Import 節點，找出其定義。"""
-    resolved_items: set[Any] = set()
-    try:
-        if isinstance(import_node, (ast.Import, ast.ImportFrom)):
-            for alias in import_node.names:
-                definitions = script.infer(line=alias.lineno, column=alias.col_offset)
-                for d in definitions:
-                    if d.full_name and d.full_name.startswith(root_pkg):
-                        resolved_items.add(d)
-    except Exception:
-        pass
-    return resolved_items
-
-
 def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dict[str, Any]:
     """分析整個專案，提取模組依賴、函式呼叫和模組細節。"""
     jedi_project = jedi.Project(path=str(project_path.parent))
     call_graph: set[tuple[str, str]] = set()
     all_components: set[str] = set()
-    all_module_details: dict[str, dict] = {}
+    full_definition_map: dict[str, str] = {}
+    full_docstring_map: dict[str, str] = {}
 
     for file_path in py_files:
         if file_path.name == "__init__.py":
             continue
         try:
             module_name = ".".join(file_path.relative_to(project_path).with_suffix("").parts)
+
             content = file_path.read_text(encoding="utf-8")
             tree = ast.parse(content, filename=str(file_path))
+
+            # [核心修正] 捕獲模組級的 Docstring
+            module_docstring = ast.get_docstring(tree)
+            if module_docstring:
+                full_docstring_map[module_name] = module_docstring
 
             visitor = CodeVisitor(module_name)
             visitor.visit(tree)
             all_components.update(visitor.components)
-
-            classes = set()
-            functions = set()
-            for def_path in visitor.definitions:
-                parts = def_path.split(".")
-                if len(parts) > 1:
-                    is_method = len(parts) > 2 and parts[-2][0].isupper()
-                    is_private = parts[-1].startswith("_")
-
-                    if not is_method and not is_private:
-                        if parts[-1][0].isupper():
-                            classes.add(parts[-1])
-                        else:
-                            functions.add(parts[-1])
-
-            all_module_details[module_name] = {"classes": sorted(classes), "functions": sorted(functions)}
+            full_definition_map.update(visitor.definition_to_module_map)
+            full_docstring_map.update(visitor.docstring_map)
 
             script = jedi.Script(code=content, path=str(file_path), project=jedi_project)
 
@@ -139,4 +131,9 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
             logging.warning(f"無法分析檔案 {file_path}: {e}")
 
     logging.info(f"程式碼分析完成：找到 {len(all_components)} 個組件(類別)，{len(call_graph)} 條函式呼叫。")
-    return {"call_graph": call_graph, "components": all_components, "module_details": all_module_details}
+    return {
+        "call_graph": call_graph,
+        "components": all_components,
+        "definition_to_module_map": full_definition_map,
+        "docstring_map": full_docstring_map,
+    }
