@@ -78,7 +78,6 @@ def render_concept_flow_graph(
     dot_source = generate_concept_flow_dot_source(graph_data, root_package, layout_engine)
 
     logging.info(f"準備將概念流動圖渲染至: {output_path} (DPI: {dpi})")
-    # [核心修改] 將 DPI 設定作為圖屬性傳遞給命令列
     command = [layout_engine, f"-T{output_path.suffix[1:]}", f"-Gdpi={dpi}"]
     try:
         process = subprocess.run(
