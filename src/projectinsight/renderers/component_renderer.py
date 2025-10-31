@@ -4,9 +4,11 @@
 """
 
 # 1. 標準庫導入
+import fnmatch
+import html
 import logging
+import re
 import subprocess
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -19,34 +21,105 @@ import graphviz
 
 def _get_node_color(node_name: str, root_package: str, layer_info: dict[str, dict[str, str]]) -> str:
     """
-    根據節點 FQN 所屬的架構層級獲取顏色。
+    [最終修正] 根據節點 FQN 所屬的架構層級（包括根層級）獲取顏色。
     """
-    default_color = "#E6F7FF"
+    # 優先匹配所有具體的子套件層級
     for layer_key, info in layer_info.items():
-        prefix = f"{root_package}.{layer_key}"
+        if layer_key == "(root)":
+            continue
+        # [核心修正] 加上結尾的點，確保只匹配子套件內部的模組
+        prefix = f"{root_package}.{layer_key}."
         if node_name.startswith(prefix):
-            return info.get("color", default_color)
-    return default_color
+            return info.get("color", "#E6F7FF")
+
+    # 如果沒有匹配到任何子套件，則回退到根層級的定義
+    if "(root)" in layer_info:
+        return layer_info["(root)"].get("color", "#E6F7FF")
+
+    # 作為最終的保險
+    return "#E6F7FF"
+
+
+def _create_html_label(
+    node_fqn: str,
+    root_package: str,
+    docstring: str | None,
+    styles: dict[str, Any],
+) -> str:
+    """
+    根據節點資訊和樣式設定，生成 Graphviz 的 HTML-like Label。
+    """
+    # --- 1. 處理標題 ---
+    title_style = styles.get("title", {})
+    title_font_size = title_style.get("font_size", 11)
+    path_color = title_style.get("path_color", "#555555")
+    main_color = title_style.get("main_color", "#000000")
+
+    prefix_to_strip = f"{root_package}."
+    simple_fqn = node_fqn[len(prefix_to_strip) :] if node_fqn.startswith(prefix_to_strip) else node_fqn
+
+    if "." in simple_fqn:
+        path_part, main_part = simple_fqn.rsplit(".", 1)
+        path_part += "."
+    else:
+        path_part, main_part = "", simple_fqn
+
+    path_part = html.escape(path_part)
+    main_part = html.escape(main_part)
+
+    font_face = 'FACE="Microsoft YaHei"'
+    path_html = f'<FONT COLOR="{path_color}" {font_face}>{path_part}</FONT>' if path_part else ""
+    main_html = f'<B><FONT COLOR="{main_color}" {font_face}>{main_part}</FONT></B>'
+    title_html = f'<FONT POINT-SIZE="{title_font_size}" {font_face}>{path_html}{main_html}</FONT>'
+
+    # --- 2. 處理 Docstring ---
+    docstring_html = ""
+    spacing_html = ""
+    if docstring:
+        doc_style = styles.get("docstring", {})
+        doc_font_size = doc_style.get("font_size", 9)
+        doc_color = doc_style.get("color", "#333333")
+        spacing = doc_style.get("spacing", 8)
+
+        cleaned_docstring = re.sub(r"^\s+", "", docstring, flags=re.MULTILINE).strip()
+        escaped_docstring = html.escape(cleaned_docstring).replace("\n", '<BR ALIGN="LEFT"/>') + '<BR ALIGN="LEFT"/>'
+
+        spacing_html = f'<TR><TD HEIGHT="{spacing}"></TD></TR>'
+        docstring_html = (
+            f'<TR><TD ALIGN="LEFT">'
+            f'<FONT POINT-SIZE="{doc_font_size}" COLOR="{doc_color}" {font_face}>{escaped_docstring}</FONT>'
+            f"</TD></TR>"
+        )
+
+    # --- 3. 組裝最終的 HTML 表格 ---
+    return (
+        "<"
+        '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">'
+        f'<TR><TD ALIGN="LEFT">{title_html}</TD></TR>'
+        f"{spacing_html}"
+        f"{docstring_html}"
+        "</TABLE>"
+        ">"
+    )
 
 
 def generate_component_dot_source(
-    graph_data: dict[str, list[Any]],
+    graph_data: dict[str, Any],
     root_package: str,
     layer_info: dict[str, dict[str, str]],
-    layout_engine: str,
+    comp_graph_config: dict[str, Any],
 ) -> str:
     """
     生成高階組件互動圖的 DOT 原始碼字串。
-
-    Args:
-        graph_data: 包含節點和邊的圖形資料字典。
-        root_package: 專案的根套件名稱。
-        layer_info: 架構層級定義。
-        layout_engine: Graphviz 佈局引擎 ('dot', 'sfdp', etc.)。
-
-    Returns:
-        DOT 格式的圖形描述字串。
     """
+    layout_config = comp_graph_config.get("layout", {})
+    node_styles = comp_graph_config.get("node_styles", {})
+    show_docstrings = node_styles.get("show_docstrings", False)
+
+    layout_engine = comp_graph_config.get("layout_engine", "dot")
+    aspect_ratio = layout_config.get("aspect_ratio", "auto")
+    user_ranking_groups = layout_config.get("ranking_groups")
+
     dot = graphviz.Digraph("ComponentInteractionGraph")
 
     font_face = 'FACE="Microsoft YaHei"'
@@ -56,14 +129,23 @@ def generate_component_dot_source(
     )
 
     dot.attr(fontname="Microsoft YaHei")
+    base_attrs = {"label": title, "charset": "UTF-8"}
     if layout_engine == "dot":
         dot.attr(
-            rankdir="TB", splines="ortho", nodesep="0.8", ranksep="1.2", label=title, charset="UTF-8", compound="true"
+            rankdir="TB",
+            splines="ortho",
+            nodesep="0.8",
+            ranksep="1.2",
+            concentrate="true",
+            **base_attrs,
         )
     else:
-        dot.attr(splines="true", nodesep="0.3", label=title, charset="UTF-8", compound="true", overlap="prism")
+        dot.attr(splines="true", nodesep="0.3", overlap="prism", **base_attrs)
 
-    dot.attr("node", shape="box", style="rounded,filled", fontname="Arial", fontsize="11")
+    if user_ranking_groups is None and aspect_ratio != "none":
+        dot.attr(ratio=str(aspect_ratio))
+
+    dot.attr("node", style="rounded,filled", fontname="Arial", fontsize="11")
     dot.attr("edge", color="gray50", arrowsize="0.7")
 
     if layer_info:
@@ -71,10 +153,18 @@ def generate_component_dot_source(
             legend.attr(label="架構層級圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
             font_tag_start = f'<FONT {font_face} POINT-SIZE="10">'
             font_tag_end = "</FONT>"
-            unique_layers = {info["name"]: info["color"] for info in layer_info.values()}
+
+            legend_data = {}
+            for key, info in layer_info.items():
+                name = info.get("name", key)
+                color = info.get("color")
+                if name and color:
+                    legend_data[name] = color
+
             legend_items = [f"<TR><TD>{font_tag_start}圖例{font_tag_end}</TD></TR>"]
-            for name, color in sorted(unique_layers.items()):
+            for name, color in sorted(legend_data.items()):
                 legend_items.append(f'<TR><TD BGCOLOR="{color}">{font_tag_start}{name}{font_tag_end}</TD></TR>')
+
             legend.node(
                 "legend_table",
                 label=f"<<TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>{''.join(legend_items)}</TABLE>>",
@@ -83,49 +173,76 @@ def generate_component_dot_source(
 
     nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
-    nodes_by_module: dict[str, list[str]] = defaultdict(list)
-    for node in nodes:
-        module_path = ".".join(node.split(".")[:-1])
-        nodes_by_module[module_path].append(node)
+    nodes_by_module = graph_data.get("nodes_by_module", {})
+    docstrings = graph_data.get("docstrings", {})
 
-    prefix_to_strip = f"{root_package}."
-    if layout_engine == "dot":
-        for module_path, module_nodes in nodes_by_module.items():
-            with dot.subgraph(name=f"cluster_{module_path}") as sg:
-                sg.attr(label=module_path, style="rounded", color="gray", fontname="Microsoft YaHei")
-                for node in module_nodes:
-                    label = node[len(prefix_to_strip) :] if node.startswith(prefix_to_strip) else node
-                    color = _get_node_color(node, root_package, layer_info)
-                    sg.node(node, label=label, fillcolor=color)
-    else:
-        for node in nodes:
-            label = node[len(prefix_to_strip) :] if node.startswith(prefix_to_strip) else node
-            color = _get_node_color(node, root_package, layer_info)
-            dot.node(node, label=label, fillcolor=color)
+    for node_fqn in nodes:
+        docstring = docstrings.get(node_fqn) if show_docstrings else None
+        color = _get_node_color(node_fqn, root_package, layer_info)
+
+        if show_docstrings:
+            label = _create_html_label(node_fqn, root_package, docstring, node_styles)
+            dot.node(node_fqn, label=label, fillcolor=color, shape="plaintext")
+        else:
+            label = node_fqn[len(f"{root_package}.") :] if node_fqn.startswith(f"{root_package}.") else node_fqn
+            dot.node(node_fqn, label=label, fillcolor=color, shape="box")
 
     for edge in edges:
         dot.edge(edge[0], edge[1])
+
+    final_ranking_groups = []
+    if user_ranking_groups is not None:
+        final_ranking_groups = user_ranking_groups
+    elif layout_engine == "dot":
+        logging.info("未提供手動分層 (ranking_groups)，啟用智慧自動分層策略。")
+        sorted_modules = sorted(nodes_by_module.keys())
+        final_ranking_groups = [[mod] for mod in sorted_modules]
+
+    if final_ranking_groups:
+        module_to_nodes_map = {mod: mod_nodes for mod, mod_nodes in nodes_by_module.items() if mod_nodes}
+        for i in range(len(final_ranking_groups) - 1):
+            current_row_patterns = final_ranking_groups[i]
+            next_row_patterns = final_ranking_groups[i + 1]
+            source_node = next(
+                (
+                    module_to_nodes_map[mod][0]
+                    for pat in current_row_patterns
+                    for mod in module_to_nodes_map
+                    if fnmatch.fnmatch(mod, pat)
+                ),
+                None,
+            )
+            target_node = next(
+                (
+                    module_to_nodes_map[mod][0]
+                    for pat in next_row_patterns
+                    for mod in module_to_nodes_map
+                    if fnmatch.fnmatch(mod, pat)
+                ),
+                None,
+            )
+            if source_node and target_node:
+                dot.edge(source_node, target_node, style="invis")
 
     return dot.source
 
 
 def render_component_graph(
-    graph_data: dict[str, list[Any]],
+    graph_data: dict[str, Any],
     output_path: Path,
     root_package: str,
-    layer_info: dict[str, dict[str, str]] | None = None,
-    layout_engine: str = "dot",
+    layer_info: dict[str, dict[str, str]],
+    comp_graph_config: dict[str, Any],
 ):
     """
     使用 graphviz 將組件互動圖渲染成圖片檔案。
     """
-    if layer_info is None:
-        layer_info = {}
+    layout_engine = comp_graph_config.get("layout_engine", "dot")
+    dpi = comp_graph_config.get("dpi", "200")
+    dot_source = generate_component_dot_source(graph_data, root_package, layer_info, comp_graph_config)
 
-    dot_source = generate_component_dot_source(graph_data, root_package, layer_info, layout_engine)
-
-    logging.info(f"準備將組件互動圖渲染至: {output_path}")
-    command = [layout_engine, f"-T{output_path.suffix[1:]}"]
+    logging.info(f"準備將組件互動圖渲染至: {output_path} (DPI: {dpi})")
+    command = [layout_engine, f"-T{output_path.suffix[1:]}", f"-Gdpi={dpi}"]
     try:
         process = subprocess.run(
             command, input=dot_source.encode("utf-8"), capture_output=True, check=True, timeout=120
