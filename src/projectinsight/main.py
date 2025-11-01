@@ -3,19 +3,27 @@
 ProjectInsight 主執行入口。
 """
 
+# 1. 標準庫導入
 import colorsys
+import importlib.resources
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
+# 2. 第三方庫導入
 import yaml
+from ruamel.yaml import YAML
 
+# 3. 本專案導入
 from projectinsight import builders, renderers, reporters
-from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
-from projectinsight.semantics import dynamic_behavior_analyzer
+from projectinsight.parsers import component_parser
 
-# 定義所有視覺化選項的最佳實踐預設值
+ASSESSMENT_THRESHOLDS = {
+    "warn_definitions": 3000,
+}
+
 DEFAULT_VIS_CONFIG: dict[str, Any] = {
     "component_interaction_graph": {
         "layout_engine": "dot",
@@ -28,6 +36,13 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
             "show_docstrings": True,
             "title": {"font_size": 11, "path_color": "#555555", "main_color": "#000000"},
             "docstring": {"font_size": 9, "color": "#333333", "spacing": 8},
+        },
+        "filtering": {
+            "exclude_nodes": [],
+        },
+        "focus": {
+            "entrypoints": [],
+            "max_depth": 3,
         },
     },
     "dynamic_behavior_graph": {
@@ -42,6 +57,99 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
 }
 
 
+def find_project_root(marker: str = "pyproject.toml") -> Path:
+    """
+    [最終修正] 使用 importlib.resources 定位套件位置，然後向上遍歷尋找標記檔案。
+    這是解決 `python -m` 執行模式下路徑問題的最健壯方法。
+    """
+    try:
+        anchor = importlib.resources.files("projectinsight")
+    except ModuleNotFoundError:
+        anchor = Path(__file__).resolve().parent
+
+    current_path = Path(str(anchor))
+    while current_path != current_path.parent:
+        if (current_path / marker).exists():
+            return current_path
+        current_path = current_path.parent
+    raise FileNotFoundError(f"無法從 '{anchor}' 向上找到專案根目錄標記檔案: {marker}")
+
+
+def _update_config_file(config_path: Path, updates: dict[str, Any]):
+    """使用 ruamel.yaml 安全地更新設定檔，保留註解和格式。"""
+    yaml_loader = YAML()
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config_data = yaml_loader.load(f)
+
+        for key, value in updates.items():
+            keys = key.split(".")
+            d = config_data
+            for k in keys[:-1]:
+                d = d.setdefault(k, {})
+            d[keys[-1]] = value
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml_loader.dump(config_data, f)
+        logging.info(f"已自動更新設定檔: {config_path.name}")
+    except Exception as e:
+        logging.error(f"自動更新設定檔 '{config_path.name}' 時失敗: {e}")
+
+
+def _interactive_wizard(config_path: Path, definition_count: int) -> str:
+    """處理大型專案的互動式配置精靈。"""
+    print("\n" + "=" * 60)
+    logging.info(f"ProjectInsight 偵測到這是一個大型專案 (約 {definition_count} 個組件)。")
+    logging.warning("直接進行完整分析可能會非常緩慢或失敗。")
+    print("-" * 60)
+    print("我們建議您選擇一種策略來縮小分析範圍：")
+    print("  1. [聚焦分析] 手動指定您想分析的核心模組 (例如: my_package.main)。")
+    print("  2. [過濾分析] 手動指定您想排除的無關模組 (例如: *tests*)。")
+    print("  3. [強制執行] 忽略建議，繼續執行完整分析 (不推薦)。")
+    print("  4. [退出] 終止分析。")
+    print("=" * 60)
+
+    while True:
+        choice = input("請輸入您的選擇 (1-4): ").strip()
+        if choice in ("1", "2", "3", "4"):
+            break
+        else:
+            print("無效的輸入，請重新輸入。")
+
+    updates = {}
+    action = "proceed"
+
+    if choice == "1":
+        print("\n請輸入您想聚焦的一個或多個模組 FQN (完整路徑)，用逗號分隔。")
+        entrypoints_str = input("> ").strip()
+        entrypoints = [ep.strip() for ep in entrypoints_str.split(",") if ep.strip()]
+        if entrypoints:
+            updates = {
+                "visualization.component_interaction_graph.focus": {
+                    "entrypoints": entrypoints,
+                    "max_depth": 3,
+                }
+            }
+            logging.info("將啟用「聚焦分析」模式。")
+    elif choice == "2":
+        print("\n請輸入您想排除的一個或多個模組模式 (支援 * 萬用字元)，用逗號分隔。")
+        patterns_str = input("> ").strip()
+        patterns = [p.strip() for p in patterns_str.split(",") if p.strip()]
+        if patterns:
+            updates = {"visualization.component_interaction_graph.filtering": {"exclude_nodes": patterns}}
+            logging.info("將啟用「過濾分析」模式。")
+    elif choice == "3":
+        updates = {"force_analysis": True}
+        logging.warning("將強制執行完整分析。")
+    elif choice == "4":
+        action = "exit"
+
+    if updates:
+        _update_config_file(config_path, updates)
+
+    return action
+
+
 def _merge_configs(default: dict, user: dict) -> dict:
     """遞迴地合併使用者設定到預設設定中。"""
     for key, value in user.items():
@@ -53,9 +161,7 @@ def _merge_configs(default: dict, user: dict) -> dict:
 
 
 def _generate_color_palette(num_colors: int) -> list[str]:
-    """
-    [新增] 使用黃金比例演算法生成一個視覺上可區分的、和諧的調色盤。
-    """
+    """使用黃金比例演算法生成一個視覺上可區分的、和諧的調色盤。"""
     palette = []
     golden_ratio_conjugate = 0.61803398875
     hue = 0.7
@@ -69,9 +175,7 @@ def _generate_color_palette(num_colors: int) -> list[str]:
 
 
 def _discover_architecture_layers(root_package_path: Path) -> dict[str, Any]:
-    """
-    [升級] 自動掃描根套件目錄，並使用演算法調色盤為其分配顏色。
-    """
+    """自動掃描根套件目錄，並使用演算法調色盤為其分配顏色。"""
     if not root_package_path.is_dir():
         return {}
 
@@ -160,16 +264,35 @@ def process_project(config_path: Path):
     py_files = sorted(python_source_root.rglob("*.py"))
     report_analysis_results: dict[str, Any] = {}
 
-    parser_results: dict[str, Any] = {}
-    graph_analysis_types = {
-        "component_interaction",
-        "auto_concept_flow",
-        "dynamic_behavior",
-    }
-    if any(at in analysis_types for at in graph_analysis_types):
-        logging.info("--- 預執行程式碼解析以獲取共享資訊 (Docstrings, etc.) ---")
-        parser_results = component_parser.analyze_code(python_source_root, root_package_name, py_files)
+    logging.info("--- 開始執行專案體量預評估 ---")
+    scan_results = component_parser.quick_ast_scan(python_source_root, py_files)
+    definition_count = scan_results["definition_count"]
 
+    comp_vis_config = vis_config.get("component_interaction_graph", {})
+    has_focus = comp_vis_config.get("focus", {}).get("entrypoints")
+    has_filter = comp_vis_config.get("filtering", {}).get("exclude_nodes")
+    is_forced = config.get("force_analysis", False)
+
+    if (
+        definition_count > ASSESSMENT_THRESHOLDS["warn_definitions"]
+        and not has_focus
+        and not has_filter
+        and not is_forced
+        and sys.stdout.isatty()
+    ):
+        action = _interactive_wizard(config_path, definition_count)
+        if action == "exit":
+            logging.info("使用者選擇退出。")
+            return
+        with open(config_path, encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+            user_vis_config = config.get("visualization", {})
+            vis_config = _merge_configs(DEFAULT_VIS_CONFIG.copy(), user_vis_config)
+
+    logging.info("--- 開始執行完整程式碼解析 ---")
+    parser_results = component_parser.full_jedi_analysis(
+        python_source_root, root_package_name, scan_results["pre_scan_results"]
+    )
     docstring_map = parser_results.get("docstring_map", {})
 
     for analysis_type in analysis_types:
@@ -178,6 +301,8 @@ def process_project(config_path: Path):
             comp_graph_config = vis_config["component_interaction_graph"]
             layout_config = comp_graph_config.get("layout", {})
             show_internal_calls = layout_config.get("show_internal_calls", True)
+            filtering_config = comp_graph_config.get("filtering")
+            focus_config = comp_graph_config.get("focus")  # [修改] 讀取聚焦設定
 
             graph_data = builders.build_component_graph_data(
                 call_graph=parser_results.get("call_graph", set()),
@@ -185,6 +310,8 @@ def process_project(config_path: Path):
                 definition_to_module_map=parser_results.get("definition_to_module_map", {}),
                 docstring_map=docstring_map,
                 show_internal_calls=show_internal_calls,
+                filtering_config=filtering_config,
+                focus_config=focus_config,  # [修改] 傳遞聚焦設定
             )
             dot_source = renderers.generate_component_dot_source(
                 graph_data, root_package_name, architecture_layers, comp_graph_config
@@ -199,75 +326,6 @@ def process_project(config_path: Path):
                 layer_info=architecture_layers,
                 comp_graph_config=comp_graph_config,
             )
-
-        elif analysis_type == "auto_concept_flow":
-            auto_concept_config = config.get("auto_concept_flow", {})
-            exclude_patterns = auto_concept_config.get("exclude_patterns", [])
-            track_groups = seed_discoverer.discover_seeds(
-                root_pkg=root_package_name,
-                py_files=py_files,
-                project_root=python_source_root,
-                exclude_patterns=exclude_patterns,
-            )
-
-            if not track_groups:
-                logging.warning(f"在 '{analysis_type}' 分析中未找到任何要追蹤的概念種子，已跳過。")
-                continue
-
-            layout_engine = "sfdp"
-            dpi = "200"
-
-            analysis_results = concept_flow_analyzer.analyze_concept_flow(
-                root_pkg=root_package_name,
-                py_files=py_files,
-                track_groups=track_groups,
-                project_root=python_source_root,
-            )
-            graph_data = builders.build_concept_flow_graph_data(analysis_results)
-            dot_source = renderers.generate_concept_flow_dot_source(graph_data, root_package_name, layout_engine)
-            report_analysis_results["concept_flow_dot_source"] = dot_source
-            png_output_path = output_dir / f"{project_name}_concept_flow_{layout_engine}.png"
-            renderers.render_concept_flow_graph(
-                graph_data=graph_data,
-                output_path=png_output_path,
-                root_package=root_package_name,
-                layout_engine=layout_engine,
-                dpi=dpi,
-            )
-
-        elif analysis_type == "dynamic_behavior":
-            dynamic_behavior_config = config.get("dynamic_behavior_analysis", {})
-            rules = dynamic_behavior_config.get("rules", [])
-            roles = dynamic_behavior_config.get("roles", {})
-            if not rules:
-                logging.warning("在 'dynamic_behavior' 分析中未找到任何規則，已跳過。")
-                continue
-
-            db_graph_config = vis_config["dynamic_behavior_graph"]
-
-            analysis_results = dynamic_behavior_analyzer.analyze_dynamic_behavior(
-                py_files=py_files,
-                rules=rules,
-                project_root=python_source_root,
-            )
-            graph_data = builders.build_dynamic_behavior_graph_data(analysis_results)
-            dot_source = renderers.generate_dynamic_behavior_dot_source(
-                graph_data, root_package_name, db_graph_config, roles, docstring_map
-            )
-            report_analysis_results["dynamic_behavior_dot_source"] = dot_source
-            layout_engine = db_graph_config.get("layout_engine", "dot")
-            png_output_path = output_dir / f"{project_name}_dynamic_behavior_{layout_engine}.png"
-            renderers.render_dynamic_behavior_graph(
-                graph_data=graph_data,
-                output_path=png_output_path,
-                root_package=root_package_name,
-                db_graph_config=db_graph_config,
-                roles_config=roles,
-                docstring_map=docstring_map,
-            )
-
-        else:
-            logging.warning(f"未知的分析類型: '{analysis_type}'。")
 
     if report_analysis_results:
         report_output_path = output_dir / f"{project_name}_InsightReport.md"
@@ -285,14 +343,19 @@ def process_project(config_path: Path):
 def main():
     """主函式，讀取工作區設定，並為每個指定的專案執行處理流程。"""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    project_root = Path(__file__).resolve().parent.parent.parent
+
+    try:
+        project_root = find_project_root()
+    except FileNotFoundError as e:
+        logging.error(f"初始化失敗: {e}")
+        return
 
     configs_dir = project_root / "configs"
     workspace_path = configs_dir / "workspace.yaml"
     projects_dir = configs_dir / "projects"
 
     if not workspace_path.is_file():
-        logging.error("工作區設定檔 'workspace.yaml' 不存在。")
+        logging.error(f"工作區設定檔 '{workspace_path}' 不存在。")
         logging.info("請從 'workspace.template.yaml' 複製一份並進行設定。")
         return
 
