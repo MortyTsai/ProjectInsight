@@ -37,6 +37,11 @@ root_package_name: "my_awesome_package"
 # 路徑是相對於本設定檔所在的 'projects/' 目錄。
 output_dir: "../../output/my_awesome_project"
 
+# [可選] 強制執行完整分析。
+# 當設定為 true 時，將會跳過對大型專案的互動式警告，直接進行完整分析。
+# 僅在您確切知道自己在做什麼時使用。
+# force_analysis: true
+
 
 # ======================================================================
 # Part 2: 分析類型與詳細配置 (Analysis Configuration)
@@ -118,12 +123,24 @@ report_settings:
       - "output"
       - ".ruff_cache"
       - "*.egg-info"
+      - "tests"
+      - "docs"
+    # [可選] 根據副檔名排除檔案。
+    exclude_extensions:
+      - ".md"
+      - ".txt"
+      - ".json"
+      - ".lock"
+    # [可選] 根據檔名模式排除檔案 (支援 '*' 萬用字元)。
+    exclude_files:
+      - "LICENSE"
+      - "README.md"
+      - ".*" # 排除所有隱藏檔案
   # 原始碼收集設定
   source_code:
     # [可選] 要包含在最終報告中的原始碼檔案的副檔名。
     included_extensions:
       - ".py"
-      - ".md"
       - ".yaml"
       - ".toml"
 
@@ -143,6 +160,34 @@ visualization:
     layout_engine: "dot"
     # [可選] 輸出圖片的 DPI (每英寸點數)，更高的值會讓圖片更清晰。預設: 200。
     dpi: 200
+
+    # [專家模式] 大型專案分析策略
+    # ------------------------------------------------------------------
+    # 說明:
+    # 當面對大型專案時，ProjectInsight 的互動式精靈會引導您設定以下選項之一。
+    # 您也可以在此處手動配置，以跳過互動式精靈。
+    # 「聚焦」和「過濾」是互斥的，請只選擇一種策略。
+    # ------------------------------------------------------------------
+
+    # 策略一：聚焦分析 (Focus Analysis) - 推薦
+    # 從指定的入口點開始，只繪製一定深度內的相關組件。
+    # focus:
+    #   # [必要] 一個或多個您想分析的核心組件的 FQN (完整路徑)。
+    #   entrypoints:
+    #     - "my_package.main.main_function"
+    #     - "my_package.core.Application"
+    #   # [可選] 從入口點開始探索的最大呼叫深度。預設: 3。
+    #   max_depth: 3
+
+    # 策略二：過濾分析 (Filtering Analysis)
+    # 繪製除了被排除組件之外的所有內容。
+    # filtering:
+    #   # [必要] 一個或多個您想從圖表中排除的組件模式 (支援 '*' 萬用字元)。
+    #   exclude_nodes:
+    #     - "*tests*"
+    #     - "*migrations*"
+    #     - "my_package.contrib.*"
+
     # [可選] 佈局調整與提示。
     layout:
       # [可選] 是否顯示模組內部的呼叫。預設: true。
