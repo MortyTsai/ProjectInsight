@@ -67,7 +67,7 @@ class CodeVisitor(ast.NodeVisitor):
 
 def quick_ast_scan(project_path: Path, py_files: list[Path]) -> dict[str, Any]:
     """
-    [新增] 執行一個快速的、無 Jedi 的 AST 掃描，以評估專案體量。
+    執行一個快速的、無 Jedi 的 AST 掃描，以評估專案體量。
     """
     total_definitions = 0
     total_loc = 0
@@ -119,7 +119,7 @@ def _resolve_call(call_node: ast.Call, script: jedi.Script, root_pkg: str) -> se
 
 def full_jedi_analysis(project_path: Path, root_pkg: str, pre_scan_results: dict[str, Any]) -> dict[str, Any]:
     """
-    [重構] 執行完整的 Jedi 分析，以建構呼叫圖。
+    執行完整的 Jedi 分析，以建構呼叫圖。
     此函式現在依賴於 quick_ast_scan 的結果。
     """
     jedi_project = jedi.Project(path=str(project_path.parent))

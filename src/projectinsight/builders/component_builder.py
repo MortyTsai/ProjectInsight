@@ -35,7 +35,7 @@ def _perform_focus_analysis(
     all_nodes: set[str], all_edges: set[tuple[str, str]], focus_config: dict[str, Any]
 ) -> tuple[set[str], set[tuple[str, str]]]:
     """
-    [修正] 根據聚焦設定，在有向圖上執行雙向 BFS 以縮小圖的規模。
+    根據聚焦設定，在有向圖上執行雙向 BFS 以縮小圖的規模。
     """
     entrypoints = focus_config.get("entrypoints", [])
     max_depth = focus_config.get("max_depth", 3)
@@ -88,7 +88,7 @@ def build_component_graph_data(
     focus_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    [修正] 調整邊過濾邏輯，確保小專案的內部呼叫能正確顯示。
+    調整邊過濾邏輯，確保小專案的內部呼叫能正確顯示。
     """
     component_edges: set[tuple[str, str]] = set()
     all_definitions = set(definition_to_module_map.keys())

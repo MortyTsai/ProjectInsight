@@ -46,7 +46,7 @@ def _create_html_label(
     border_color: str,
 ) -> str:
     """
-    [最終方案] 使用單一表格、單一儲存格的結構，實現像素完美的、同色系深色邊框高亮。
+    使用單一表格、單一儲存格的結構，實現像素完美的、同色系深色邊框高亮。
     """
     title_style = styles.get("title", {})
     title_font_size = title_style.get("font_size", 11)

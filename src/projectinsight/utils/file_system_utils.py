@@ -34,7 +34,7 @@ def generate_tree_structure(
     tree_settings: dict[str, Any],
 ) -> list[str]:
     """
-    [升級] 生成專案目錄的文字表示結構樹，支援多種過濾規則。
+    生成專案目錄的文字表示結構樹，支援多種過濾規則。
 
     Args:
         start_path: 要生成目錄樹的起始路徑。
