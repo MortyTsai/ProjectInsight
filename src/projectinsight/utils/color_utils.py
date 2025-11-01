@@ -8,7 +8,7 @@ import colorsys
 
 def get_analogous_dark_color(hex_color: str) -> str:
     """
-    [修改] 根據給定的十六進位背景色，計算一個相似的、更深的、醒目的邊框顏色。
+    根據給定的十六進位背景色，計算一個相似的、更深的、醒目的邊框顏色。
 
     Args:
         hex_color: 十六進位顏色字串 (例如 "#RRGGBB")。
