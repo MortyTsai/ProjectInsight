@@ -28,20 +28,13 @@ class CodeVisitor(ast.NodeVisitor):
         self.components: set[str] = set()
         self.definition_to_module_map: dict[str, str] = {}
         self.docstring_map: dict[str, str] = {}
-
-    def visit_Import(self, node: ast.Import):
-        self.imports.append(node)
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node: ast.ImportFrom):
-        if node.module != "__future__":
-            self.imports.append(node)
-        self.generic_visit(node)
+        self.definition_count = 0  # [新增] 用於快速掃描
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         scope_name = ".".join([*self.current_scope, node.name])
         self.definitions.add(scope_name)
         self.definition_to_module_map[scope_name] = self.module_path
+        self.definition_count += 1
 
         docstring = ast.get_docstring(node)
         if docstring:
@@ -56,6 +49,7 @@ class CodeVisitor(ast.NodeVisitor):
         self.definitions.add(scope_name)
         self.components.add(scope_name)
         self.definition_to_module_map[scope_name] = self.module_path
+        self.definition_count += 1
 
         docstring = ast.get_docstring(node)
         if docstring:
@@ -69,6 +63,40 @@ class CodeVisitor(ast.NodeVisitor):
         caller_path = ".".join(self.current_scope)
         self.calls.append((caller_path, node))
         self.generic_visit(node)
+
+
+def quick_ast_scan(project_path: Path, py_files: list[Path]) -> dict[str, Any]:
+    """
+    執行一個快速的、無 Jedi 的 AST 掃描，以評估專案體量。
+    """
+    total_definitions = 0
+    total_loc = 0
+    pre_scan_results = {}
+
+    for file_path in py_files:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            total_loc += len(content.splitlines())
+            tree = ast.parse(content, filename=str(file_path))
+
+            module_name = ".".join(file_path.relative_to(project_path).with_suffix("").parts)
+            visitor = CodeVisitor(module_name)
+            visitor.visit(tree)
+            total_definitions += visitor.definition_count
+            pre_scan_results[str(file_path)] = {
+                "visitor": visitor,
+                "content": content,
+            }
+        except Exception as e:
+            logging.debug(f"快速掃描時無法分析檔案 {file_path}: {e}")
+
+    logging.info(f"快速 AST 掃描完成：找到 {len(py_files)} 個檔案, {total_loc} 行程式碼, {total_definitions} 個定義。")
+    return {
+        "file_count": len(py_files),
+        "total_loc": total_loc,
+        "definition_count": total_definitions,
+        "pre_scan_results": pre_scan_results,
+    }
 
 
 def _resolve_call(call_node: ast.Call, script: jedi.Script, root_pkg: str) -> set[Any]:
@@ -89,35 +117,33 @@ def _resolve_call(call_node: ast.Call, script: jedi.Script, root_pkg: str) -> se
     return resolved_items
 
 
-def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dict[str, Any]:
-    """分析整個專案，提取模組依賴、函式呼叫和模組細節。"""
+def full_jedi_analysis(project_path: Path, root_pkg: str, pre_scan_results: dict[str, Any]) -> dict[str, Any]:
+    """
+    執行完整的 Jedi 分析，以建構呼叫圖。
+    此函式現在依賴於 quick_ast_scan 的結果。
+    """
     jedi_project = jedi.Project(path=str(project_path.parent))
     call_graph: set[tuple[str, str]] = set()
     all_components: set[str] = set()
     full_definition_map: dict[str, str] = {}
     full_docstring_map: dict[str, str] = {}
 
-    for file_path in py_files:
-        if file_path.name == "__init__.py":
-            continue
+    for file_path_str, scan_data in pre_scan_results.items():
+        file_path = Path(file_path_str)
         try:
-            module_name = ".".join(file_path.relative_to(project_path).with_suffix("").parts)
+            visitor = scan_data["visitor"]
+            content = scan_data["content"]
 
-            content = file_path.read_text(encoding="utf-8")
-            tree = ast.parse(content, filename=str(file_path))
-
-            module_docstring = ast.get_docstring(tree)
-            if module_docstring:
-                full_docstring_map[module_name] = module_docstring
-
-            visitor = CodeVisitor(module_name)
-            visitor.visit(tree)
             all_components.update(visitor.components)
             full_definition_map.update(visitor.definition_to_module_map)
             full_docstring_map.update(visitor.docstring_map)
 
-            script = jedi.Script(code=content, path=str(file_path), project=jedi_project)
+            tree = ast.parse(content, filename=str(file_path))
+            module_docstring = ast.get_docstring(tree)
+            if module_docstring:
+                full_docstring_map[visitor.module_path] = module_docstring
 
+            script = jedi.Script(code=content, path=str(file_path), project=jedi_project)
             for caller_path, call_node in visitor.calls:
                 definitions = _resolve_call(call_node, script, root_pkg)
                 for d in definitions:
@@ -129,7 +155,7 @@ def analyze_code(project_path: Path, root_pkg: str, py_files: list[Path]) -> dic
         except Exception as e:
             logging.warning(f"無法分析檔案 {file_path}: {e}")
 
-    logging.info(f"程式碼分析完成：找到 {len(all_components)} 個組件(類別)，{len(call_graph)} 條函式呼叫。")
+    logging.info(f"完整 Jedi 分析完成：找到 {len(all_components)} 個組件(類別)，{len(call_graph)} 條函式呼叫。")
     return {
         "call_graph": call_graph,
         "components": all_components,
