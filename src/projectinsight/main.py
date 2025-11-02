@@ -5,12 +5,12 @@ ProjectInsight 主執行入口。
 
 # 1. 標準庫導入
 import colorsys
-import importlib.resources
 import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
+import importlib.resources
 
 # 2. 第三方庫導入
 import yaml
@@ -18,12 +18,15 @@ from ruamel.yaml import YAML
 
 # 3. 本專案導入
 from projectinsight import builders, renderers, reporters
-from projectinsight.parsers import component_parser
+from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
+from projectinsight.semantics import dynamic_behavior_analyzer
 
+# 定義體量評估的閾值
 ASSESSMENT_THRESHOLDS = {
     "warn_definitions": 3000,
 }
 
+# 定義所有視覺化選項的最佳實踐預設值
 DEFAULT_VIS_CONFIG: dict[str, Any] = {
     "component_interaction_graph": {
         "layout_engine": "dot",
@@ -59,7 +62,7 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
 
 def find_project_root(marker: str = "pyproject.toml") -> Path:
     """
-    [最終修正] 使用 importlib.resources 定位套件位置，然後向上遍歷尋找標記檔案。
+    使用 importlib.resources 定位套件位置，然後向上遍歷尋找標記檔案。
     這是解決 `python -m` 執行模式下路徑問題的最健壯方法。
     """
     try:
@@ -302,7 +305,7 @@ def process_project(config_path: Path):
             layout_config = comp_graph_config.get("layout", {})
             show_internal_calls = layout_config.get("show_internal_calls", True)
             filtering_config = comp_graph_config.get("filtering")
-            focus_config = comp_graph_config.get("focus")  # [修改] 讀取聚焦設定
+            focus_config = comp_graph_config.get("focus")
 
             graph_data = builders.build_component_graph_data(
                 call_graph=parser_results.get("call_graph", set()),
@@ -311,7 +314,7 @@ def process_project(config_path: Path):
                 docstring_map=docstring_map,
                 show_internal_calls=show_internal_calls,
                 filtering_config=filtering_config,
-                focus_config=focus_config,  # [修改] 傳遞聚焦設定
+                focus_config=focus_config,
             )
             dot_source = renderers.generate_component_dot_source(
                 graph_data, root_package_name, architecture_layers, comp_graph_config
@@ -325,6 +328,72 @@ def process_project(config_path: Path):
                 root_package=root_package_name,
                 layer_info=architecture_layers,
                 comp_graph_config=comp_graph_config,
+            )
+        # [修正] 恢復遺失的 elif 區塊
+        elif analysis_type == "auto_concept_flow":
+            auto_concept_config = config.get("auto_concept_flow", {})
+            exclude_patterns = auto_concept_config.get("exclude_patterns", [])
+            track_groups = seed_discoverer.discover_seeds(
+                root_pkg=root_package_name,
+                py_files=py_files,
+                project_root=python_source_root,
+                exclude_patterns=exclude_patterns,
+            )
+
+            if not track_groups:
+                logging.warning(f"在 '{analysis_type}' 分析中未找到任何要追蹤的概念種子，已跳過。")
+                continue
+
+            layout_engine = "sfdp"
+            dpi = "200"
+
+            analysis_results = concept_flow_analyzer.analyze_concept_flow(
+                root_pkg=root_package_name,
+                py_files=py_files,
+                track_groups=track_groups,
+                project_root=python_source_root,
+            )
+            graph_data = builders.build_concept_flow_graph_data(analysis_results)
+            dot_source = renderers.generate_concept_flow_dot_source(graph_data, root_package_name, layout_engine)
+            report_analysis_results["concept_flow_dot_source"] = dot_source
+            png_output_path = output_dir / f"{project_name}_concept_flow_{layout_engine}.png"
+            renderers.render_concept_flow_graph(
+                graph_data=graph_data,
+                output_path=png_output_path,
+                root_package=root_package_name,
+                layout_engine=layout_engine,
+                dpi=dpi,
+            )
+
+        elif analysis_type == "dynamic_behavior":
+            dynamic_behavior_config = config.get("dynamic_behavior_analysis", {})
+            rules = dynamic_behavior_config.get("rules", [])
+            roles = dynamic_behavior_config.get("roles", {})
+            if not rules:
+                logging.warning("在 'dynamic_behavior' 分析中未找到任何規則，已跳過。")
+                continue
+
+            db_graph_config = vis_config["dynamic_behavior_graph"]
+
+            analysis_results = dynamic_behavior_analyzer.analyze_dynamic_behavior(
+                py_files=py_files,
+                rules=rules,
+                project_root=python_source_root,
+            )
+            graph_data = builders.build_dynamic_behavior_graph_data(analysis_results)
+            dot_source = renderers.generate_dynamic_behavior_dot_source(
+                graph_data, root_package_name, db_graph_config, roles, docstring_map
+            )
+            report_analysis_results["dynamic_behavior_dot_source"] = dot_source
+            layout_engine = db_graph_config.get("layout_engine", "dot")
+            png_output_path = output_dir / f"{project_name}_dynamic_behavior_{layout_engine}.png"
+            renderers.render_dynamic_behavior_graph(
+                graph_data=graph_data,
+                output_path=png_output_path,
+                root_package=root_package_name,
+                db_graph_config=db_graph_config,
+                roles_config=roles,
+                docstring_map=docstring_map,
             )
 
     if report_analysis_results:
