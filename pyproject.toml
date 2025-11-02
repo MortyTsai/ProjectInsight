@@ -16,6 +16,7 @@ dependencies = [
     "PyYAML",
     "jedi",
     "libcst",
+    "ruamel.yaml",
 ]
 
 [project.optional-dependencies]
