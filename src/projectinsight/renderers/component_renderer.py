@@ -16,12 +16,12 @@ from typing import Any
 import graphviz
 
 # 3. 本專案導入
-# (無)
+from projectinsight.utils.color_utils import get_analogous_dark_color
 
 
 def _get_node_color(node_name: str, root_package: str, layer_info: dict[str, dict[str, str]]) -> str:
     """
-    [最終修正] 根據節點 FQN 所屬的架構層級（包括根層級）獲取顏色。
+    根據節點 FQN 所屬的架構層級（包括根層級）獲取顏色。
     """
     for layer_key, info in layer_info.items():
         if layer_key == "(root)":
@@ -41,11 +41,13 @@ def _create_html_label(
     root_package: str,
     docstring: str | None,
     styles: dict[str, Any],
+    is_entrypoint: bool,
+    bg_color: str,
+    border_color: str,
 ) -> str:
     """
-    根據節點資訊和樣式設定，生成 Graphviz 的 HTML-like Label。
+    使用單一表格、單一儲存格的結構，實現像素完美的、同色系深色邊框高亮。
     """
-    # --- 1. 處理標題 ---
     title_style = styles.get("title", {})
     title_font_size = title_style.get("font_size", 11)
     path_color = title_style.get("path_color", "#555555")
@@ -68,35 +70,32 @@ def _create_html_label(
     main_html = f'<B><FONT COLOR="{main_color}" {font_face}>{main_part}</FONT></B>'
     title_html = f'<FONT POINT-SIZE="{title_font_size}" {font_face}>{path_html}{main_html}</FONT>'
 
-    # --- 2. 處理 Docstring ---
     docstring_html = ""
-    spacing_html = ""
     if docstring:
         doc_style = styles.get("docstring", {})
         doc_font_size = doc_style.get("font_size", 9)
         doc_color = doc_style.get("color", "#333333")
         spacing = doc_style.get("spacing", 8)
 
+        br_spacing = "<BR/>" * (spacing // 4)
+
         cleaned_docstring = re.sub(r"^\s+", "", docstring, flags=re.MULTILINE).strip()
         escaped_docstring = html.escape(cleaned_docstring).replace("\n", '<BR ALIGN="LEFT"/>') + '<BR ALIGN="LEFT"/>'
 
-        spacing_html = f'<TR><TD HEIGHT="{spacing}"></TD></TR>'
         docstring_html = (
-            f'<TR><TD ALIGN="LEFT">'
-            f'<FONT POINT-SIZE="{doc_font_size}" COLOR="{doc_color}" {font_face}>{escaped_docstring}</FONT>'
-            f"</TD></TR>"
+            f'{br_spacing}<FONT POINT-SIZE="{doc_font_size}" COLOR="{doc_color}" {font_face}>{escaped_docstring}</FONT>'
         )
 
-    # --- 3. 組裝最終的 HTML 表格 ---
-    return (
-        "<"
-        '<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="4">'
-        f'<TR><TD ALIGN="LEFT">{title_html}</TD></TR>'
-        f"{spacing_html}"
-        f"{docstring_html}"
-        "</TABLE>"
-        ">"
-    )
+    content = f"{title_html}{docstring_html}"
+
+    if is_entrypoint:
+        table_attrs = (
+            f'BORDER="3" COLOR="{border_color}" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="{bg_color}"'
+        )
+    else:
+        table_attrs = f'BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="{bg_color}"'
+
+    return f'<<TABLE {table_attrs}><TR><TD ALIGN="LEFT" VALIGN="TOP">{content}</TD></TR></TABLE>>'
 
 
 def generate_component_dot_source(
@@ -111,6 +110,8 @@ def generate_component_dot_source(
     layout_config = comp_graph_config.get("layout", {})
     node_styles = comp_graph_config.get("node_styles", {})
     show_docstrings = node_styles.get("show_docstrings", False)
+    focus_config = comp_graph_config.get("focus", {})
+    entrypoints = set(focus_config.get("entrypoints", []))
 
     layout_engine = comp_graph_config.get("layout_engine", "dot")
     aspect_ratio = layout_config.get("aspect_ratio", "auto")
@@ -141,7 +142,7 @@ def generate_component_dot_source(
     if user_ranking_groups is None and aspect_ratio != "none":
         dot.attr(ratio=str(aspect_ratio))
 
-    dot.attr("node", style="rounded,filled", fontname="Arial", fontsize="11")
+    dot.attr("node", style="filled", fontname="Arial", fontsize="11")
     dot.attr("edge", color="gray50", arrowsize="0.7")
 
     if layer_info:
@@ -175,13 +176,23 @@ def generate_component_dot_source(
     for node_fqn in nodes:
         docstring = docstrings.get(node_fqn) if show_docstrings else None
         color = _get_node_color(node_fqn, root_package, layer_info)
+        is_entrypoint = node_fqn in entrypoints
+
+        node_attrs = {"fillcolor": color}
 
         if show_docstrings:
-            label = _create_html_label(node_fqn, root_package, docstring, node_styles)
-            dot.node(node_fqn, label=label, fillcolor=color, shape="plaintext")
+            border_color = get_analogous_dark_color(color) if is_entrypoint else ""
+            label = _create_html_label(
+                node_fqn, root_package, docstring, node_styles, is_entrypoint, color, border_color
+            )
+            dot.node(node_fqn, label=label, shape="plaintext", **node_attrs)
         else:
+            if is_entrypoint:
+                node_attrs["pencolor"] = get_analogous_dark_color(color)
+                node_attrs["penwidth"] = "3.0"
+                node_attrs["style"] = "rounded,filled,bold"
             label = node_fqn[len(f"{root_package}.") :] if node_fqn.startswith(f"{root_package}.") else node_fqn
-            dot.node(node_fqn, label=label, fillcolor=color, shape="box")
+            dot.node(node_fqn, label=label, shape="box", **node_attrs)
 
     for edge in edges:
         dot.edge(edge[0], edge[1])
