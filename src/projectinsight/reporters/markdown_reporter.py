@@ -68,11 +68,10 @@ def generate_markdown_report(
 
     # --- 2. 專案結構總覽 ---
     tree_settings = report_settings.get("tree_view", {})
-    exclude_dirs = set(tree_settings.get("exclude_dirs", []))
     report_parts.append("\n## 1. 專案結構總覽")
     report_parts.append("<details>\n<summary>點擊展開/摺疊專案檔案樹</summary>\n")
     report_parts.append("```")
-    tree_lines = generate_tree_structure(target_project_root, exclude_dirs=exclude_dirs)
+    tree_lines = generate_tree_structure(target_project_root, tree_settings=tree_settings)
     report_parts.extend(tree_lines)
     report_parts.append("```\n</details>\n")
 
