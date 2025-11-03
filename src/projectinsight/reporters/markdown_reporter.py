@@ -62,11 +62,9 @@ def generate_markdown_report(
     report_parts = []
     analysis_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # --- 1. 報告標頭 ---
     report_parts.append(f"# ProjectInsight 分析報告: {project_name}")
     report_parts.append(f"**分析時間**: {analysis_time}")
 
-    # --- 2. 專案結構總覽 ---
     tree_settings = report_settings.get("tree_view", {})
     report_parts.append("\n## 1. 專案結構總覽")
     report_parts.append("<details>\n<summary>點擊展開/摺疊專案檔案樹</summary>\n")
@@ -75,7 +73,6 @@ def generate_markdown_report(
     report_parts.extend(tree_lines)
     report_parts.append("```\n</details>\n")
 
-    # --- 3. 組件互動圖 ---
     component_dot = analysis_results.get("component_dot_source")
     if component_dot:
         report_parts.append("## 2. 高階組件互動圖")
@@ -84,7 +81,6 @@ def generate_markdown_report(
         report_parts.append(component_dot)
         report_parts.append("```\n</details>\n")
 
-    # --- 4. 概念流動圖 ---
     concept_dot = analysis_results.get("concept_flow_dot_source")
     if concept_dot:
         report_parts.append("## 3. 概念流動圖")
@@ -93,7 +89,6 @@ def generate_markdown_report(
         report_parts.append(concept_dot)
         report_parts.append("```\n</details>\n")
 
-    # --- 5. 動態行為圖 ---
     dynamic_dot = analysis_results.get("dynamic_behavior_dot_source")
     if dynamic_dot:
         report_parts.append("## 4. 動態行為圖")
@@ -102,7 +97,6 @@ def generate_markdown_report(
         report_parts.append(dynamic_dot)
         report_parts.append("```\n</details>\n")
 
-    # --- 6. 所有原始碼 ---
     report_parts.append("## 5. 專案完整原始碼")
     source_files = _collect_source_files(target_project_root, report_settings)
     for file_path in source_files:
@@ -117,7 +111,6 @@ def generate_markdown_report(
             report_parts.append(f"無法讀取檔案: {e}")
         report_parts.append("```\n</details>\n")
 
-    # --- 寫入檔案 ---
     try:
         final_report = "\n".join(report_parts)
         output_path.write_text(final_report, encoding="utf-8")
