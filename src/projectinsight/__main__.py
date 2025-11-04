@@ -5,18 +5,28 @@ ProjectInsight 主執行入口。
 
 # 1. 標準庫導入
 import logging
+from pathlib import Path
 
 # 2. 第三方庫導入
 import yaml
 
 # 3. 本專案導入
 from projectinsight.core.project_processor import ProjectProcessor
-from projectinsight.utils import find_project_root
+from projectinsight.utils import PickleFilter, find_project_root
 
 
 def main():
     """主函式，讀取工作區設定，並為每個指定的專案執行處理流程。"""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+
+    if not root_logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG) # [除錯] 臨時將控制台輸出級別設為 DEBUG
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        console_handler.setFormatter(formatter)
+        console_handler.addFilter(PickleFilter())
+        root_logger.addHandler(console_handler)
 
     try:
         project_root = find_project_root()
