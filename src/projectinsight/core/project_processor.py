@@ -20,6 +20,7 @@ from projectinsight.core.interactive_wizard import InteractiveWizard
 from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
 from projectinsight.semantics import dynamic_behavior_analyzer
 
+# 定義體量評估的閾值
 ASSESSMENT_THRESHOLDS = {
     "warn_definitions": 3000,
 }
@@ -75,8 +76,9 @@ class ProjectProcessor:
             self.config_loader = ConfigLoader(self.config_path)
             self.config = self.config_loader.config
 
-        logging.info("--- 開始執行完整程式碼解析 ---")
-        parser_results = component_parser.full_jedi_analysis(
+        logging.info("--- 開始執行完整程式碼解析 (使用 LibCST 引擎) ---")
+        # [重構] 呼叫新的 LibCST 引擎
+        parser_results = component_parser.full_libcst_analysis(
             python_source_root,
             root_package_name,
             scan_results["pre_scan_results"],
@@ -171,7 +173,10 @@ class ProjectProcessor:
                 all_components=parser_results.get("components", set()),
                 definition_to_module_map=parser_results.get("definition_to_module_map", {}),
                 docstring_map=docstring_map,
-                show_internal_calls=layout_config.get("show_internal_calls", True),
+                # [最終修正]
+                # 貫徹 P0.3 和 P0.6 原則，將智慧預設值改為 False，
+                # 專注於高層次抽象，杜絕內部呼叫的雜訊。
+                show_internal_calls=layout_config.get("show_internal_calls", False),
                 filtering_config=comp_graph_config.get("filtering"),
                 focus_config=comp_graph_config.get("focus"),
             )
