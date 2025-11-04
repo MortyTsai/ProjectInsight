@@ -11,6 +11,7 @@ from typing import Any
 
 # 2. 第三方庫導入
 # (無)
+
 # 3. 本專案導入
 from projectinsight.core.config_loader import ConfigLoader
 from projectinsight.intelligence.ecosystem_analyzer import EcosystemAnalyzer
@@ -72,10 +73,10 @@ class InteractiveWizard:
                 entry_point_score = entry_points_bonus
 
             total_score = (
-                (h_score * weights.get("heuristic_score", 1.0))
-                + (hub_score * weights.get("hub_score", 1.0))
-                + (framework_score * weights.get("entry_point_score", 1.0))
-                + (entry_point_score * weights.get("entry_point_score", 1.0))
+                    (h_score * weights.get("heuristic_score", 1.0))
+                    + (hub_score * weights.get("hub_score", 1.0))
+                    + (framework_score * weights.get("entry_point_score", 1.0))
+                    + (entry_point_score * weights.get("entry_point_score", 1.0))
             )
             combined_scores[fqn] = total_score
 
@@ -146,7 +147,7 @@ class InteractiveWizard:
             updates = {
                 "visualization.component_interaction_graph.focus": {
                     "entrypoints": [selected_fqn],
-                    "max_depth": 3,
+                    "initial_depth": 2,
                 }
             }
             logging.info(f"將啟用「聚焦分析」模式，入口點: {selected_fqn}")
@@ -160,7 +161,7 @@ class InteractiveWizard:
                     updates = {
                         "visualization.component_interaction_graph.focus": {
                             "entrypoints": entrypoints,
-                            "max_depth": 3,
+                            "initial_depth": 2,
                         }
                     }
                     logging.info("將啟用「聚焦分析」模式。")

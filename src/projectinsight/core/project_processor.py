@@ -12,6 +12,7 @@ from typing import Any
 
 # 2. 第三方庫導入
 # (無)
+
 # 3. 本專案導入
 from projectinsight import builders, renderers, reporters
 from projectinsight.core.config_loader import ConfigLoader
@@ -55,7 +56,13 @@ class ProjectProcessor:
         logging.info(f"Python 原始碼分析根目錄: {python_source_root}")
         logging.info(f"將執行以下分析: {', '.join(analysis_types)}")
 
-        py_files = sorted(python_source_root.rglob("*.py"))
+        root_package_dir = python_source_root / root_package_name
+        if not root_package_dir.is_dir():
+            logging.error(f"根套件目錄不存在: {root_package_dir}")
+            return
+        py_files = sorted(root_package_dir.rglob("*.py"))
+        logging.info(f"在根套件 '{root_package_name}' 中找到 {len(py_files)} 個 Python 檔案進行分析。")
+
         logging.info("--- 開始執行專案體量預評估 ---")
         scan_results = component_parser.quick_ast_scan(python_source_root, py_files, root_package_name)
 
@@ -70,7 +77,10 @@ class ProjectProcessor:
 
         logging.info("--- 開始執行完整程式碼解析 ---")
         parser_results = component_parser.full_jedi_analysis(
-            python_source_root, root_package_name, scan_results["pre_scan_results"]
+            python_source_root,
+            root_package_name,
+            scan_results["pre_scan_results"],
+            scan_results["definition_to_module_map"],
         )
         docstring_map = parser_results.get("docstring_map", {})
         report_analysis_results: dict[str, Any] = {}
