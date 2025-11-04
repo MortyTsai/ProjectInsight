@@ -34,7 +34,10 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
         },
         "focus": {
             "entrypoints": [],
-            "max_depth": 3,
+            "initial_depth": 2,
+            "enable_dynamic_depth": True,
+            "min_nodes": 10,
+            "max_search_depth": 7,
         },
     },
     "dynamic_behavior_graph": {
