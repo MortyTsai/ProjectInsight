@@ -12,6 +12,7 @@ from typing import Any
 # 2. 第三方庫導入
 import jedi
 
+
 # 3. 本專案導入
 # (無)
 
@@ -61,10 +62,10 @@ class CodeVisitor(ast.NodeVisitor):
             left = node.test.left
             comparator = node.test.comparators[0]
             if (
-                isinstance(left, ast.Name)
-                and left.id == "__name__"
-                and isinstance(comparator, ast.Constant)
-                and comparator.value == "__main__"
+                    isinstance(left, ast.Name)
+                    and left.id == "__name__"
+                    and isinstance(comparator, ast.Constant)
+                    and comparator.value == "__main__"
             ):
                 self.has_main_block = True
         self.generic_visit(node)
@@ -166,15 +167,20 @@ def _resolve_call(call_node: ast.Call, script: jedi.Script, root_pkg: str) -> se
     return resolved_items
 
 
-def full_jedi_analysis(project_path: Path, root_pkg: str, pre_scan_results: dict[str, Any]) -> dict[str, Any]:
+def full_jedi_analysis(
+        project_path: Path,
+        root_pkg: str,
+        pre_scan_results: dict[str, Any],
+        initial_definition_map: dict[str, str],
+) -> dict[str, Any]:
     """
     執行完整的 Jedi 分析，以建構呼叫圖。
-    此函式現在依賴於 quick_ast_scan 的結果。
     """
-    jedi_project = jedi.Project(path=str(project_path.parent))
+    jedi_project = jedi.Project(path=str(project_path))
+
     call_graph: set[tuple[str, str]] = set()
     all_components: set[str] = set()
-    full_definition_map: dict[str, str] = {}
+    full_definition_map = initial_definition_map.copy()
     full_docstring_map: dict[str, str] = {}
 
     for file_path_str, scan_data in pre_scan_results.items():
@@ -183,7 +189,6 @@ def full_jedi_analysis(project_path: Path, root_pkg: str, pre_scan_results: dict
             visitor = scan_data["visitor"]
             content = scan_data["content"]
             all_components.update(visitor.components)
-            full_definition_map.update(visitor.definition_to_module_map)
             full_docstring_map.update(visitor.docstring_map)
             tree = ast.parse(content, filename=str(file_path))
             module_docstring = ast.get_docstring(tree)
@@ -191,12 +196,22 @@ def full_jedi_analysis(project_path: Path, root_pkg: str, pre_scan_results: dict
                 full_docstring_map[visitor.module_path] = module_docstring
             script = jedi.Script(code=content, path=str(file_path), project=jedi_project)
             for caller_path, call_node in visitor.calls:
+                if "execute_from_command_line" in caller_path:
+                    logging.debug(f"--- JEDI PROBE: Analyzing calls in '{caller_path}' ---")
+
                 definitions = _resolve_call(call_node, script, root_pkg)
                 for d in definitions:
                     if d.type in ("function", "class"):
                         callee_path = f"{d.full_name}.__init__" if d.type == "class" else d.full_name
-                        if callee_path and caller_path != callee_path and caller_path in visitor.definitions:
+
+                        if "execute_from_command_line" in caller_path:
+                            logging.debug(f"  - Found call from '{caller_path}' to '{callee_path}' (type: {d.type})")
+
+                        if callee_path and caller_path != callee_path:
                             call_graph.add((caller_path, callee_path))
+                            if callee_path not in full_definition_map and d.module_path:
+                                full_definition_map[callee_path] = d.module_name
+
         except Exception as e:
             logging.warning(f"無法分析檔案 {file_path}: {e}")
 
