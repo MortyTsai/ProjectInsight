@@ -37,13 +37,13 @@ def _get_node_color(node_name: str, root_package: str, layer_info: dict[str, dic
 
 
 def _create_html_label(
-    node_fqn: str,
-    root_package: str,
-    docstring: str | None,
-    styles: dict[str, Any],
-    is_entrypoint: bool,
-    bg_color: str,
-    border_color: str,
+        node_fqn: str,
+        root_package: str,
+        docstring: str | None,
+        styles: dict[str, Any],
+        is_entrypoint: bool,
+        bg_color: str,
+        border_color: str,
 ) -> str:
     """
     使用單一表格、單一儲存格的結構，實現像素完美的、同色系深色邊框高亮。
@@ -53,13 +53,20 @@ def _create_html_label(
     path_color = title_style.get("path_color", "#555555")
     main_color = title_style.get("main_color", "#000000")
 
-    prefix_to_strip = f"{root_package}."
-    simple_fqn = node_fqn[len(prefix_to_strip) :] if node_fqn.startswith(prefix_to_strip) else node_fqn
+    # [最終修正]
+    # 根本性地修復 FQN 拆分邏輯。
+    # 我們不再移除 root_package，而是始終使用完整的 FQN 進行拆分。
 
+    # 1. 始終使用完整的 FQN
+    simple_fqn = node_fqn
+
+    # 2. 只有當 FQN *確實* 包含路徑時才拆分
     if "." in simple_fqn:
+        # (例如 "django.core.management.ManagementUtility")
         path_part, main_part = simple_fqn.rsplit(".", 1)
-        path_part += "."
+        path_part += "."  # (路徑變為 "django.core.management.")
     else:
+        # (例如 "django" - 雖然不應發生，但作為防禦)
         path_part, main_part = "", simple_fqn
 
     path_part = html.escape(path_part)
@@ -99,17 +106,17 @@ def _create_html_label(
 
 
 def generate_component_dot_source(
-    graph_data: dict[str, Any],
-    root_package: str,
-    layer_info: dict[str, dict[str, str]],
-    comp_graph_config: dict[str, Any],
+        graph_data: dict[str, Any],
+        root_package: str,
+        layer_info: dict[str, dict[str, str]],
+        comp_graph_config: dict[str, Any],
 ) -> str:
     """
     生成高階組件互動圖的 DOT 原始碼字串。
     """
     layout_config = comp_graph_config.get("layout", {})
     node_styles = comp_graph_config.get("node_styles", {})
-    show_docstrings = node_styles.get("show_docstrings", False)
+    show_docstrings = node_styles.get("show_docstrings", True)  # 確保預設為 True
     focus_config = comp_graph_config.get("focus", {})
     entrypoints = set(focus_config.get("entrypoints", []))
 
@@ -191,7 +198,7 @@ def generate_component_dot_source(
                 node_attrs["pencolor"] = get_analogous_dark_color(color)
                 node_attrs["penwidth"] = "3.0"
                 node_attrs["style"] = "rounded,filled,bold"
-            label = node_fqn[len(f"{root_package}.") :] if node_fqn.startswith(f"{root_package}.") else node_fqn
+            label = node_fqn[len(f"{root_package}."):] if node_fqn.startswith(f"{root_package}.") else node_fqn
             dot.node(node_fqn, label=label, shape="box", **node_attrs)
 
     for edge in edges:
@@ -201,7 +208,7 @@ def generate_component_dot_source(
     if user_ranking_groups is not None:
         final_ranking_groups = user_ranking_groups
     elif layout_engine == "dot":
-        logging.info("未提供手動分層 (ranking_groups)，啟用智慧自動分層策略。")
+        logging.debug("未提供手動分層 (ranking_groups)，啟用智慧自動分層策略。")
         sorted_modules = sorted(nodes_by_module.keys())
         final_ranking_groups = [[mod] for mod in sorted_modules]
 
@@ -235,11 +242,11 @@ def generate_component_dot_source(
 
 
 def render_component_graph(
-    graph_data: dict[str, Any],
-    output_path: Path,
-    root_package: str,
-    layer_info: dict[str, dict[str, str]],
-    comp_graph_config: dict[str, Any],
+        graph_data: dict[str, Any],
+        output_path: Path,
+        root_package: str,
+        layer_info: dict[str, dict[str, str]],
+        comp_graph_config: dict[str, Any],
 ):
     """
     使用 graphviz 將組件互動圖渲染成圖片檔案。
