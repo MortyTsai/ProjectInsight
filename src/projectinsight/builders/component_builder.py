@@ -21,14 +21,22 @@ def _get_component_for_path(full_path: str, all_components: set[str],
                             definition_to_module_map: dict[str, str]) -> str | None:
     """
     確定一個 FQN 應歸屬到的高階組件（類別或公開的模組級函式）。
+    [降噪] 新增了對 '<locals>' 的處理，將內部函式呼叫歸屬回其父組件。
     """
     if not full_path:
         return None
+
+    # [新增] 處理 <locals> 雜訊
+    # 如果一個 FQN 包含 'locals' (例如 A.B.<locals>.C)，
+    # 我們將其歸屬回其父組件 (A.B)，以消除低層次雜訊。
+    if ".<locals>." in full_path:
+        full_path = full_path.split(".<locals>.", 1)[0]
 
     if full_path in all_components:
         return full_path
 
     parts = full_path.split(".")
+    # [修正] 修正 range() 的第三個參數 (來自上次開發)
     for i in range(len(parts) - 1, 0, -1):
         potential_component = ".".join(parts[:i])
         if potential_component in all_components:
@@ -70,6 +78,7 @@ def _perform_focus_analysis(
     else:
         logging.debug(f"'{entrypoint_node}' has NO predecessors in the graph.")
 
+    # [修正] 修正 BFS 演算法的實現，使其更標準和健壯
     visited_successors = set()
     queue = deque([(ep, 0) for ep in entrypoints if ep in all_nodes])
     for ep in entrypoints:
