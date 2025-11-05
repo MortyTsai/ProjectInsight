@@ -11,7 +11,6 @@ from typing import Any
 
 # 2. 第三方庫導入
 # (無)
-
 # 3. 本專案導入
 from projectinsight.core.config_loader import ConfigLoader
 from projectinsight.intelligence.ecosystem_analyzer import EcosystemAnalyzer
@@ -50,17 +49,17 @@ class InteractiveWizard:
         standard_entrypoints = eco_analyzer.get_standard_entrypoints()
 
         combined_scores: dict[str, float] = {}
-        all_fqns = set(heuristic_scores.keys()) | set(standard_entrypoints.keys())
+        all_definition_fqns = set(heuristic_scores.keys()) | set(standard_entrypoints.keys())
 
-        for fqn in all_fqns:
+        for fqn in all_definition_fqns:
             h_score = heuristic_scores.get(fqn, 0.0)
 
             module_path = definition_to_module_map.get(fqn)
-            if not module_path and fqn in hits_scores:
-                module_path = fqn
+            if not module_path:
+                continue
 
             hub_score = 0.0
-            if module_path and module_path in hits_scores:
+            if module_path in hits_scores:
                 hub_score = hits_scores[module_path].get("hub", 0.0) * 100
 
             framework_score = 0.0
@@ -73,10 +72,10 @@ class InteractiveWizard:
                 entry_point_score = entry_points_bonus
 
             total_score = (
-                    (h_score * weights.get("heuristic_score", 1.0))
-                    + (hub_score * weights.get("hub_score", 1.0))
-                    + (framework_score * weights.get("entry_point_score", 1.0))
-                    + (entry_point_score * weights.get("entry_point_score", 1.0))
+                (h_score * weights.get("heuristic_score", 1.0))
+                + (hub_score * weights.get("hub_score", 1.0))
+                + (framework_score * weights.get("entry_point_score", 1.0))
+                + (entry_point_score * weights.get("entry_point_score", 1.0))
             )
             combined_scores[fqn] = total_score
 
@@ -87,15 +86,7 @@ class InteractiveWizard:
 
         for fqn, score in sorted_candidates:
             module_path = definition_to_module_map.get(fqn)
-            is_module_itself = False
-            if not module_path and fqn in hits_scores:
-                module_path = fqn
-                is_module_itself = True
-
             if not module_path:
-                continue
-
-            if is_module_itself and not any(def_fqn.startswith(fqn) for def_fqn in definition_to_module_map):
                 continue
 
             if module_path not in seen_modules:
