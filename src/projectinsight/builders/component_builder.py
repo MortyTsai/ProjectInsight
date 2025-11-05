@@ -9,7 +9,6 @@ import logging
 from collections import defaultdict, deque
 from typing import Any
 
-
 # 2. 第三方庫導入
 # (無)
 
@@ -17,39 +16,30 @@ from typing import Any
 # (無)
 
 
-def _get_component_for_path(full_path: str, all_components: set[str],
-                            definition_to_module_map: dict[str, str]) -> str | None:
+def _get_component_for_path(full_path: str, all_components: set[str]) -> str | None:
     """
-    確定一個 FQN 應歸屬到的高階組件（類別或公開的模組級函式）。
-    [降噪] 新增了對 '<locals>' 的處理，將內部函式呼叫歸屬回其父組件。
+    [最終修正] 恢復並確認正確的抽象邏輯。
+    將任何 FQN 解析回其所屬的、最近的公開高階組件。
     """
     if not full_path:
         return None
 
-    # [新增] 處理 <locals> 雜訊
-    # 如果一個 FQN 包含 'locals' (例如 A.B.<locals>.C)，
-    # 我們將其歸屬回其父組件 (A.B)，以消除低層次雜訊。
-    if ".<locals>." in full_path:
-        full_path = full_path.split(".<locals>.", 1)[0]
+    path_without_locals = full_path.split(".<locals>.", 1)[0]
 
-    if full_path in all_components:
-        return full_path
+    if path_without_locals in all_components:
+        return path_without_locals
 
-    parts = full_path.split(".")
-    # [修正] 修正 range() 的第三個參數 (來自上次開發)
+    parts = path_without_locals.split(".")
     for i in range(len(parts) - 1, 0, -1):
         potential_component = ".".join(parts[:i])
         if potential_component in all_components:
             return potential_component
 
-    if full_path in definition_to_module_map:
-        return full_path
-
-    return full_path
+    return path_without_locals
 
 
 def _perform_focus_analysis(
-        all_nodes: set[str], all_edges: set[tuple[str, str]], focus_config: dict[str, Any], current_depth: int
+    all_nodes: set[str], all_edges: set[tuple[str, str]], focus_config: dict[str, Any], current_depth: int
 ) -> tuple[set[str], set[tuple[str, str]]]:
     """
     根據聚焦設定，在有向圖上執行雙向 BFS 以縮小圖的規模。
@@ -78,7 +68,6 @@ def _perform_focus_analysis(
     else:
         logging.debug(f"'{entrypoint_node}' has NO predecessors in the graph.")
 
-    # [修正] 修正 BFS 演算法的實現，使其更標準和健壯
     visited_successors = set()
     queue = deque([(ep, 0) for ep in entrypoints if ep in all_nodes])
     for ep in entrypoints:
@@ -120,36 +109,28 @@ def _perform_focus_analysis(
 
 
 def build_component_graph_data(
-        call_graph: set[tuple[str, str]],
-        all_components: set[str],
-        definition_to_module_map: dict[str, str],
-        docstring_map: dict[str, str],
-        show_internal_calls: bool = True,
-        filtering_config: dict[str, Any] | None = None,
-        focus_config: dict[str, Any] | None = None,
+    call_graph: set[tuple[str, str]],
+    all_components: set[str],
+    definition_to_module_map: dict[str, str],
+    docstring_map: dict[str, str],
+    show_internal_calls: bool = True,
+    filtering_config: dict[str, Any] | None = None,
+    focus_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     調整邊過濾邏輯，並實現智慧化深度調整。
     """
     component_edges: set[tuple[str, str]] = set()
 
-    logging.debug(f"--- BUILDER: 開始建構組件圖 ---")
+    logging.debug("--- BUILDER: 開始建構組件圖 ---")
     logging.debug(f"接收到 call_graph 邊數: {len(call_graph)}")
     logging.debug(f"接收到 all_components 節點數: {len(all_components)}")
-    logging.debug(f"接收到 definition_to_module_map 條目數: {len(definition_to_module_map)}")
-
-    for i, (caller, callee) in enumerate(call_graph):
-        if i < 10:
-            logging.debug(f"  - 樣本邊 #{i + 1}: {caller} -> {callee}")
 
     for caller, callee in call_graph:
-        caller_component = _get_component_for_path(caller, all_components, definition_to_module_map)
-        callee_component = _get_component_for_path(callee, all_components, definition_to_module_map)
+        caller_component = _get_component_for_path(caller, all_components)
+        callee_component = _get_component_for_path(callee, all_components)
 
         if not (caller_component and callee_component):
-            logging.debug(f"  - [丟棄的邊] 原因: 元件解析失敗")
-            logging.debug(f"    - Caller: '{caller}' -> '{caller_component}'")
-            logging.debug(f"    - Callee: '{callee}' -> '{callee_component}'")
             continue
 
         if caller_component != callee_component or show_internal_calls:
