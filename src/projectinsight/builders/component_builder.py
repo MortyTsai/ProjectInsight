@@ -16,28 +16,6 @@ from typing import Any
 # (無)
 
 
-def _get_component_for_path(full_path: str, all_components: set[str]) -> str | None:
-    """
-    [最終修正] 恢復並確認正確的抽象邏輯。
-    將任何 FQN 解析回其所屬的、最近的公開高階組件。
-    """
-    if not full_path:
-        return None
-
-    path_without_locals = full_path.split(".<locals>.", 1)[0]
-
-    if path_without_locals in all_components:
-        return path_without_locals
-
-    parts = path_without_locals.split(".")
-    for i in range(len(parts) - 1, 0, -1):
-        potential_component = ".".join(parts[:i])
-        if potential_component in all_components:
-            return potential_component
-
-    return path_without_locals
-
-
 def _perform_focus_analysis(
     all_nodes: set[str], all_edges: set[tuple[str, str]], focus_config: dict[str, Any], current_depth: int
 ) -> tuple[set[str], set[tuple[str, str]]]:
@@ -118,30 +96,24 @@ def build_component_graph_data(
     focus_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    調整邊過濾邏輯，並實現智慧化深度調整。
+    [職責簡化]
+    接收由 Parser 產出的、已經被完全抽象的呼叫圖，並對其進行過濾和資料結構轉換。
+    此函式不再進行任何 FQN 解析或抽象。
     """
-    component_edges: set[tuple[str, str]] = set()
+    logging.debug("--- BUILDER: 開始建構組件圖 (職責簡化版) ---")
+    logging.debug(f"接收到已抽象的 call_graph 邊數: {len(call_graph)}")
 
-    logging.debug("--- BUILDER: 開始建構組件圖 ---")
-    logging.debug(f"接收到 call_graph 邊數: {len(call_graph)}")
-    logging.debug(f"接收到 all_components 節點數: {len(all_components)}")
-
-    for caller, callee in call_graph:
-        caller_component = _get_component_for_path(caller, all_components)
-        callee_component = _get_component_for_path(callee, all_components)
-
-        if not (caller_component and callee_component):
-            continue
-
-        if caller_component != callee_component or show_internal_calls:
-            component_edges.add((caller_component, callee_component))
-
-    logging.debug(f"轉換後 component_edges 邊數: {len(component_edges)}")
+    if show_internal_calls:
+        component_edges = call_graph
+    else:
+        component_edges = {(caller, callee) for caller, callee in call_graph if caller != callee}
+    logging.debug(f"過濾自循環後，邊數: {len(component_edges)}")
 
     initial_nodes: set[str] = set()
     for caller, callee in component_edges:
         initial_nodes.add(caller)
         initial_nodes.add(callee)
+    initial_nodes.update(all_components)
 
     current_nodes, current_edges = initial_nodes, component_edges
 
