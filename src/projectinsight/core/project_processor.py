@@ -12,7 +12,6 @@ from typing import Any
 
 # 2. 第三方庫導入
 # (無)
-
 # 3. 本專案導入
 from projectinsight import builders, renderers, reporters
 from projectinsight.core.config_loader import ConfigLoader
@@ -20,7 +19,6 @@ from projectinsight.core.interactive_wizard import InteractiveWizard
 from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
 from projectinsight.semantics import dynamic_behavior_analyzer
 
-# 定義體量評估的閾值
 ASSESSMENT_THRESHOLDS = {
     "warn_definitions": 3000,
 }
@@ -77,12 +75,15 @@ class ProjectProcessor:
             self.config = self.config_loader.config
 
         logging.info("--- 開始執行完整程式碼解析 (使用 LibCST 引擎) ---")
-        # [重構] 呼叫新的 LibCST 引擎
+        parser_settings = self.config.get("parser_settings", {})
+        alias_resolution_settings = parser_settings.get("alias_resolution", {})
+
         parser_results = component_parser.full_libcst_analysis(
-            python_source_root,
-            root_package_name,
-            scan_results["pre_scan_results"],
-            scan_results["definition_to_module_map"],
+            project_path=python_source_root,
+            root_pkg=root_package_name,
+            pre_scan_results=scan_results["pre_scan_results"],
+            initial_definition_map=scan_results["definition_to_module_map"],
+            alias_exclude_patterns=alias_resolution_settings.get("exclude_patterns", []),
         )
         docstring_map = parser_results.get("docstring_map", {})
         report_analysis_results: dict[str, Any] = {}
@@ -173,9 +174,6 @@ class ProjectProcessor:
                 all_components=parser_results.get("components", set()),
                 definition_to_module_map=parser_results.get("definition_to_module_map", {}),
                 docstring_map=docstring_map,
-                # [最終修正]
-                # 貫徹 P0.3 和 P0.6 原則，將智慧預設值改為 False，
-                # 專注於高層次抽象，杜絕內部呼叫的雜訊。
                 show_internal_calls=layout_config.get("show_internal_calls", False),
                 filtering_config=comp_graph_config.get("filtering"),
                 focus_config=comp_graph_config.get("focus"),
