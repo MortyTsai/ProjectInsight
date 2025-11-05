@@ -57,15 +57,15 @@ def generate_tree_structure(
     def recurse(directory: Path, prefix: str = ""):
         """遞迴地建構目錄樹的內部輔助函式."""
 
-        def is_excluded(path: Path) -> bool:
+        def is_excluded(p: Path) -> bool:
             """檢查路徑是否符合任何排除模式。"""
-            if path.is_dir():
-                return any(fnmatch.fnmatch(path.name, pattern) for pattern in exclude_dirs)
+            if p.is_dir():
+                return any(fnmatch.fnmatch(p.name, pattern) for pattern in exclude_dirs)
 
-            if path.suffix in exclude_extensions:
+            if p.suffix in exclude_extensions:
                 return True
 
-            return any(fnmatch.fnmatch(path.name, pattern) for pattern in exclude_files)
+            return any(fnmatch.fnmatch(p.name, pattern) for pattern in exclude_files)
 
         try:
             items = sorted(
