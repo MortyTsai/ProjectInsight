@@ -5,7 +5,6 @@ ProjectInsight 主執行入口。
 
 # 1. 標準庫導入
 import logging
-from pathlib import Path
 
 # 2. 第三方庫導入
 import yaml
@@ -22,7 +21,7 @@ def main():
 
     if not root_logger.handlers:
         console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG) # [除錯] 臨時將控制台輸出級別設為 DEBUG
+        console_handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         console_handler.setFormatter(formatter)
         console_handler.addFilter(PickleFilter())
