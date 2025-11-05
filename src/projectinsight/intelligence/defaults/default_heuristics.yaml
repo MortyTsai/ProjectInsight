@@ -64,4 +64,3 @@ frameworks:
     bonus_points:
       - { pattern: "pandas.core.frame.DataFrame", score: 120 }
       - { pattern: "pandas.core.series.Series", score: 100 }
-      # [移除] 移除 io.api.* 規則，因為它不可靠，我們將信任 Hub 分數
