@@ -17,6 +17,7 @@ class PickleFilter(logging.Filter):
     """
     一個自訂的日誌過濾器，用於攔截包含 'pickle loaded' 的訊息。
     """
+
     def filter(self, record: logging.LogRecord) -> bool:
         """
         如果日誌訊息不包含 'pickle loaded'，則回傳 True。
