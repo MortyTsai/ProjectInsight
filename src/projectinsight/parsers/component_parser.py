@@ -135,7 +135,8 @@ def quick_ast_scan(project_path: Path, py_files: list[Path], root_package_name: 
 
             relative_path = file_path.relative_to(project_path)
             parts = list(relative_path.parts)
-            if parts[-1] == "__init__.py":
+
+            if parts[-1] == "__init__.py" or parts[-1] == "__main__.py":
                 parts.pop()
             else:
                 parts[-1] = relative_path.stem
@@ -270,7 +271,6 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
         root_pkg: str,
         all_components: set[str],
         module_path: str,
-        all_definitions: set[str],
         alias_map: dict[str, str],
         file_path: str,
     ):
@@ -279,15 +279,18 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
         self.root_pkg = root_pkg
         self.all_components = all_components
         self.module_path = module_path
-        self.all_definitions = all_definitions
         self.alias_map = alias_map
         self.file_path = file_path
         self.found_edges: set[tuple[str, str]] = set()
 
     def _resolve_to_public_component(self, fqn: str) -> str | None:
         """
+        [核心抽象邏輯]
         將任何 FQN（包括私有成員或方法）解析回其所屬的、最近的公開高階組件。
         """
+        if not fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
 
         if path in self.all_components:
@@ -306,16 +309,15 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
         """在訪問 cst.Call 節點時被觸發。"""
         try:
             enclosing_fqn = self._get_enclosing_function_fqn(node)
+            if not enclosing_fqn:
+                return
+
             caller_component = self._resolve_to_public_component(enclosing_fqn)
+            if not caller_component:
+                return
 
             callee_fqns = self.get_metadata(FullyQualifiedNameProvider, node.func)
             if not callee_fqns:
-                pos = self.get_metadata(PositionProvider, node)
-                code_snippet = self.wrapper.module.code_for_node(node.func)
-                logging.debug(
-                    f"  [解析失敗] 在 {self.file_path} 第 {pos.start.line} 行, "
-                    f"無法解析呼叫目標: '{code_snippet}'。可能為動態呼叫。"
-                )
                 return
 
             for fqn_obj in callee_fqns:
@@ -324,16 +326,17 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
                     continue
 
                 normalized_callee_fqn = _normalize_call_fqn(original_callee_fqn, self.alias_map)
-
                 callee_component = self._resolve_to_public_component(normalized_callee_fqn)
+                if not callee_component:
+                    continue
 
-                if caller_component and callee_component and caller_component != callee_component:
+                if caller_component and callee_component:
                     self.found_edges.add((caller_component, callee_component))
 
         except Exception as e:
             logging.debug(f"解析呼叫時出錯: {e}")
 
-    def _get_enclosing_function_fqn(self, node: cst.CSTNode) -> str:
+    def _get_enclosing_function_fqn(self, node: cst.CSTNode) -> str | None:
         """使用 ParentNodeProvider 向上追溯，找到包裹節點的函式 FQN。"""
         current = node
         while current:
@@ -363,14 +366,12 @@ def full_libcst_analysis(
     """
     all_components: set[str] = set()
     full_docstring_map: dict[str, str] = {}
-    all_definitions_set: set[str] = set()
     call_graph: set[tuple[str, str]] = set()
 
     for scan_data in pre_scan_results.values():
         visitor: CodeVisitor = scan_data["visitor"]
         all_components.update(visitor.components)
         full_docstring_map.update(visitor.docstring_map)
-        all_definitions_set.update(visitor.definitions)
         try:
             tree = ast.parse(scan_data["content"], filename=str(visitor.file_path))
             module_docstring = ast.get_docstring(tree)
@@ -411,7 +412,6 @@ def full_libcst_analysis(
                     root_pkg,
                     all_components,
                     module_path,
-                    all_definitions_set,
                     alias_map,
                     file_path_str,
                 )
