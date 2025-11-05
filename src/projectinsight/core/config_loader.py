@@ -16,12 +16,21 @@ from ruamel.yaml import YAML
 # 3. 本專案導入
 # (無)
 
+DEFAULT_PARSER_CONFIG: dict[str, Any] = {
+    "alias_resolution": {
+        "exclude_patterns": [
+            "*.tests.*",
+            "*._*",
+        ]
+    }
+}
+
 DEFAULT_VIS_CONFIG: dict[str, Any] = {
     "component_interaction_graph": {
         "layout_engine": "dot",
         "dpi": 200,
         "layout": {
-            "show_internal_calls": True,
+            "show_internal_calls": False,
             "aspect_ratio": "auto",
         },
         "node_styles": {
@@ -76,6 +85,9 @@ class ConfigLoader:
 
     def _process_config(self):
         """處理載入後的設定，進行合併和自動發現。"""
+        user_parser_config = self.config.get("parser_settings", {})
+        self.config["parser_settings"] = self._merge_configs(DEFAULT_PARSER_CONFIG.copy(), user_parser_config)
+
         user_vis_config = self.config.get("visualization", {})
         self.config["visualization"] = self._merge_configs(DEFAULT_VIS_CONFIG.copy(), user_vis_config)
 
