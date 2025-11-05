@@ -11,7 +11,8 @@ import yaml
 
 # 3. 本專案導入
 from projectinsight.core.project_processor import ProjectProcessor
-from projectinsight.utils import PickleFilter, find_project_root
+from projectinsight.utils.logging_utils import PickleFilter
+from projectinsight.utils.path_utils import find_project_root
 
 
 def main():
