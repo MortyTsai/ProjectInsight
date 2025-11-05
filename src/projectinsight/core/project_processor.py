@@ -13,10 +13,22 @@ from typing import Any
 # 2. 第三方庫導入
 # (無)
 # 3. 本專案導入
-from projectinsight import builders, renderers, reporters
+from projectinsight.builders.component_builder import build_component_graph_data
+from projectinsight.builders.concept_flow_builder import build_concept_flow_graph_data
+from projectinsight.builders.dynamic_behavior_builder import build_dynamic_behavior_graph_data
 from projectinsight.core.config_loader import ConfigLoader
 from projectinsight.core.interactive_wizard import InteractiveWizard
 from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
+from projectinsight.renderers.component_renderer import generate_component_dot_source, render_component_graph
+from projectinsight.renderers.concept_flow_renderer import (
+    generate_concept_flow_dot_source,
+    render_concept_flow_graph,
+)
+from projectinsight.renderers.dynamic_behavior_renderer import (
+    generate_dynamic_behavior_dot_source,
+    render_dynamic_behavior_graph,
+)
+from projectinsight.reporters.markdown_reporter import generate_markdown_report
 from projectinsight.semantics import dynamic_behavior_analyzer
 
 ASSESSMENT_THRESHOLDS = {
@@ -101,7 +113,7 @@ class ProjectProcessor:
 
         if report_analysis_results:
             report_output_path = output_dir / f"{self.project_name}_InsightReport.md"
-            reporters.generate_markdown_report(
+            generate_markdown_report(
                 project_name=self.project_name,
                 target_project_root=target_project_root,
                 output_path=report_output_path,
@@ -169,7 +181,7 @@ class ProjectProcessor:
         if analysis_type == "component_interaction":
             comp_graph_config = vis_config["component_interaction_graph"]
             layout_config = comp_graph_config.get("layout", {})
-            graph_data = builders.build_component_graph_data(
+            graph_data = build_component_graph_data(
                 call_graph=parser_results.get("call_graph", set()),
                 all_components=parser_results.get("components", set()),
                 definition_to_module_map=parser_results.get("definition_to_module_map", {}),
@@ -178,13 +190,13 @@ class ProjectProcessor:
                 filtering_config=comp_graph_config.get("filtering"),
                 focus_config=comp_graph_config.get("focus"),
             )
-            dot_source = renderers.generate_component_dot_source(
+            dot_source = generate_component_dot_source(
                 graph_data, root_package_name, architecture_layers, comp_graph_config
             )
             report_analysis_results["component_dot_source"] = dot_source
             layout_engine = comp_graph_config.get("layout_engine", "dot")
             png_output_path = output_dir / f"{self.project_name}_component_interaction_{layout_engine}.png"
-            renderers.render_component_graph(
+            render_component_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
                 root_package=root_package_name,
@@ -210,11 +222,11 @@ class ProjectProcessor:
                 track_groups=track_groups,
                 project_root=python_source_root,
             )
-            graph_data = builders.build_concept_flow_graph_data(analysis_results)
-            dot_source = renderers.generate_concept_flow_dot_source(graph_data, root_package_name, "sfdp")
+            graph_data = build_concept_flow_graph_data(analysis_results)
+            dot_source = generate_concept_flow_dot_source(graph_data, root_package_name, "sfdp")
             report_analysis_results["concept_flow_dot_source"] = dot_source
             png_output_path = output_dir / f"{self.project_name}_concept_flow_sfdp.png"
-            renderers.render_concept_flow_graph(
+            render_concept_flow_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
                 root_package=root_package_name,
@@ -233,8 +245,8 @@ class ProjectProcessor:
             analysis_results = dynamic_behavior_analyzer.analyze_dynamic_behavior(
                 py_files=py_files, rules=rules, project_root=python_source_root
             )
-            graph_data = builders.build_dynamic_behavior_graph_data(analysis_results)
-            dot_source = renderers.generate_dynamic_behavior_dot_source(
+            graph_data = build_dynamic_behavior_graph_data(analysis_results)
+            dot_source = generate_dynamic_behavior_dot_source(
                 graph_data,
                 root_package_name,
                 db_graph_config,
@@ -244,7 +256,7 @@ class ProjectProcessor:
             report_analysis_results["dynamic_behavior_dot_source"] = dot_source
             layout_engine = db_graph_config.get("layout_engine", "dot")
             png_output_path = output_dir / f"{self.project_name}_dynamic_behavior_{layout_engine}.png"
-            renderers.render_dynamic_behavior_graph(
+            render_dynamic_behavior_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
                 root_package=root_package_name,
