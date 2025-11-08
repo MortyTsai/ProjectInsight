@@ -94,31 +94,42 @@ def build_component_graph_data(
     show_internal_calls: bool = True,
     filtering_config: dict[str, Any] | None = None,
     focus_config: dict[str, Any] | None = None,
+    semantic_edges: set[tuple[str, str, str]] | None = None,  # [新增]
 ) -> dict[str, Any]:
     """
     [職責簡化]
-    接收由 Parser 產出的、已經被完全抽象的呼叫圖，並對其進行過濾和資料結構轉換。
+    接收由 Parser 產出的、已經被完全抽象的呼叫圖和語義連結，
+    並對其進行過濾和資料結構轉換。
     此函式不再進行任何 FQN 解析或抽象。
     """
     logging.debug("--- BUILDER: 開始建構組件圖 (職責簡化版) ---")
     logging.debug(f"接收到已抽象的 call_graph 邊數: {len(call_graph)}")
+    if semantic_edges:  # [新增]
+        logging.debug(f"接收到 semantic_edges 邊數: {len(semantic_edges)}")
 
     if show_internal_calls:
         component_edges = call_graph
     else:
         component_edges = {(caller, callee) for caller, callee in call_graph if caller != callee}
-    logging.debug(f"過濾自循環後，邊數: {len(component_edges)}")
+    logging.debug(f"過濾自循環後，(呼叫)邊數: {len(component_edges)}")
 
     initial_nodes: set[str] = set()
     for caller, callee in component_edges:
         initial_nodes.add(caller)
         initial_nodes.add(callee)
+    if semantic_edges:  # [新增]
+        for u, v, _ in semantic_edges:
+            initial_nodes.add(u)
+            initial_nodes.add(v)
     initial_nodes.update(all_components)
 
     current_nodes, current_edges = initial_nodes, component_edges
+    current_semantic_edges = semantic_edges or set()  # [新增]
 
     if focus_config and focus_config.get("entrypoints"):
         enable_dynamic_depth = focus_config.get("enable_dynamic_depth", True)
+        # [注意] 聚焦分析目前只作用於「呼叫邊」，語義邊會被過濾
+        # TODO: 未來可以考慮讓聚焦分析同時作用於兩種邊
         if enable_dynamic_depth:
             initial_depth = focus_config.get("initial_depth", 2)
             min_nodes = focus_config.get("min_nodes", 10)
@@ -162,6 +173,12 @@ def build_component_graph_data(
     final_edges = {
         (caller, callee) for caller, callee in current_edges if caller in final_nodes and callee in final_nodes
     }
+    # [新增] 同樣過濾語義邊
+    final_semantic_edges = {
+        (u, v, label)
+        for u, v, label in current_semantic_edges
+        if u in final_nodes and v in final_nodes
+    }
 
     nodes_by_module: dict[str, list[str]] = defaultdict(list)
     for node in sorted(final_nodes):
@@ -177,4 +194,5 @@ def build_component_graph_data(
         "edges": sorted(final_edges),
         "nodes_by_module": nodes_by_module,
         "docstrings": docstring_map,
+        "semantic_edges": sorted(final_semantic_edges),  # [新增]
     }
