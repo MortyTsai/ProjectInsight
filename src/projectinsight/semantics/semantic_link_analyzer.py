@@ -21,6 +21,7 @@ from libcst.metadata import (
     ScopeProvider,
 )
 
+
 # 3. 本專案導入
 # (無)
 
@@ -261,7 +262,7 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             child_component = self._resolve_to_public_component(child_fqn)
 
             if not child_component or (
-                not child_fqn.startswith(self.root_pkg) and not child_fqn.startswith("builtins")
+                    not child_fqn.startswith(self.root_pkg) and not child_fqn.startswith("builtins")
             ):
                 return
 
@@ -273,7 +274,7 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             # 啟發式規則
             if decorator_fqn.split(".")[-1] in ("route", "command", "errorhandler", "before_request"):
                 if m.matches(
-                    node.decorator, m.Call(func=m.Attribute(value=m.DoNotCare()))
+                        node.decorator, m.Call(func=m.Attribute(value=m.DoNotCare()))
                 ):
                     decorator_fqn = self._get_fqn_from_node(
                         node.decorator.func.value
@@ -304,10 +305,9 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
 
 class _ProxyVisitor(m.MatcherDecoratableVisitor):
     """
-    [新增 P4]
+    [P4 最終修復 - 第7版] (基於 ScopeProvider)
     一個 LibCST 訪問者，用於發現通用的「代理」模式。
-    匹配: request = LocalProxy(lambda: ...)
-    [!!] 已植入日誌探針
+    匹配: X = SomeFunc(...) 或 X: T = SomeFunc(...)
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
@@ -344,65 +344,174 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
             logging.debug(f"無法獲取節點 FQN: {e}")
         return None
 
+    # [!!] P4 最終修復 (第7版)
+    # 採用 P2.2 和 P0.5 的最終方案：使用 ScopeProvider 追蹤導入來源
+    def _is_proxy_call(self, call_func_node: cst.CSTNode) -> bool:
+        """
+        使用 ScopeProvider 檢查節點是否為從 'werkzeug.local' 導入的
+        'LocalProxy' 或 'LocalStack'。
+        """
+        if not isinstance(call_func_node, (cst.Name, cst.Attribute)):
+            return False
+
+        try:
+            # 1. 獲取節點的名稱 (例如 "LocalProxy")
+            call_name_node = call_func_node
+            if isinstance(call_func_node, cst.Attribute):
+                call_name_node = call_func_node.attr
+
+            if not isinstance(call_name_node, cst.Name):
+                return False
+
+            call_name = call_name_node.value
+            if call_name not in ("LocalProxy", "LocalStack"):
+                return False
+
+            # 2. 獲取當前作用域
+            scope = self.get_metadata(ScopeProvider, call_func_node)
+
+            # 3. 遍歷作用域中的所有賦值
+            for assignment in scope.assignments:
+                if assignment.name == call_name:
+                    # 4. 找到定義此名稱的節點 (cst.ImportFrom)
+                    if isinstance(assignment.node, cst.ImportFrom):
+                        import_node = assignment.node
+
+                        # 5. 獲取導入來源模組 (cst.Attribute 或 cst.Name)
+                        module_name_node = import_node.module
+                        if module_name_node is None:
+                            continue
+
+                        # 將 cst.Attribute(value=Name("werkzeug"), attr=Name("local"))
+                        # 轉換為 "werkzeug.local"
+                        module_parts = []
+                        current = module_name_node
+                        while isinstance(current, cst.Attribute):
+                            module_parts.append(current.attr.value)
+                            current = current.value
+                        if isinstance(current, cst.Name):
+                            module_parts.append(current.value)
+
+                        module_name = ".".join(reversed(module_parts))
+
+                        # 6. 最終驗證
+                        if module_name == "werkzeug.local":
+                            # [!! 移除探針 !!]
+                            return True
+
+            # [!! 移除探針 !!]
+            return False
+
+        except Exception as e:
+            logging.debug(f"ScopeProvider 追蹤導入時出錯: {e}")
+            return False
+
+    # 修正 P0 級 API 錯誤：使用 @m.visit 裝飾*新*方法
     @m.visit(
-        m.Assign(
-            value=m.Call(
-                # [!!] 已修復 (P2.2):
-                # 修正了 m.Name(value=m.OneOf(...)) 的 P0 級語法錯誤
-                func=m.OneOf(
-                    m.Name("LocalProxy"),
-                    m.Name("LocalStack")
-                ),
-                args=[m.Arg(value=m.Lambda())],
-            )
+        m.OneOf(
+            m.Assign(value=m.Call()),
+            m.AnnAssign(value=m.Call())
         )
     )
-    def visit_proxy_assign(self, node: cst.Assign):
+    def visit_proxy_assignment(self, node: cst.Assign | cst.AnnAssign):
         """
-        處理 X = LocalProxy(lambda: Y) 模式。
+        處理 X = SomeFunc(Y) 或 X: T = SomeFunc(Y) 模式。
         """
-        # [探針 P4-1] 測試 Matcher 是否被觸發
-        logging.debug("[PROBE-P4] 'visit_proxy_assign' Matcher 觸發成功。")
+        # [!! 移除探針 !!]
+
         try:
-            # 1. 解析代理物件 (Proxy)
-            proxy_fqn = self._get_fqn_from_node(node.targets[0].target)  # [!!] 修正
+            # 步驟 0: 適配節點
+            target_node: cst.CSTNode
+            call_node: cst.Call
+
+            if isinstance(node, cst.Assign):
+                target_node = node.targets[0].target
+                if not isinstance(node.value, cst.Call): return
+                call_node = node.value
+            elif isinstance(node, cst.AnnAssign):
+                target_node = node.target
+                if not node.value or not isinstance(node.value, cst.Call): return
+                call_node = node.value
+            else:
+                return
+
+            call_func_node = call_node.func
+
+            # [!! 移除探針 !!]
+
+            # 步驟 1: [!! 最終修正 !!] 使用 ScopeProvider 驗證
+            if not self._is_proxy_call(call_func_node):
+                return
+
+            # [!! 移除探針 !!]
+
+            # 步驟 2: 解析代理物件 (Proxy)
+            proxy_fqn = self._get_fqn_from_node(target_node)
             proxy_component = self._resolve_to_public_component(proxy_fqn)
-            logging.debug(f"[PROBE-P4] 代理 (Proxy) 解析為: {proxy_component}")
+
+            # [!! P4 最終邏輯修復 !!]
+            # 如果 FQN 是 None 或 component 是 None (因為 P0.9 不包含模組級變數)，
+            # 則直接使用 FQN 作為 component 名稱。
+            if proxy_fqn and not proxy_component:
+                # [!! 移除探針 !!]
+                proxy_component = proxy_fqn
+
+            # [!! 移除探針 !!]
 
             if not proxy_component:
                 return
 
-            # 2. 解析代理目標 (Target)
-            lambda_node = node.value.args[0].value
-            if not isinstance(lambda_node, cst.Lambda):
+            # 步驟 3: 解析代理目標 (Target)
+            if not call_node.args:
+                # [!! 移除探針 !!]
                 return
 
-            # 啟發式規則：在 lambda 體中尋找第一個 Name 或 Attribute
-            target_node = None
-            if m.matches(lambda_node.body, m.Name()):
-                target_node = lambda_node.body
-            elif m.matches(lambda_node.body, m.Attribute()):
-                target_node = lambda_node.body
-            elif m.matches(lambda_node.body, m.Call(func=m.Name())):
-                target_node = lambda_node.body.func
-            elif m.matches(lambda_node.body, m.Call(func=m.Attribute())):
-                target_node = lambda_node.body.func
+            target_arg_node = call_node.args[0].value
+            target_node_for_fqn: cst.CSTNode | None = None
+            # [!! 移除探針 !!]
 
-            if not target_node:
-                logging.debug("[PROBE-P4] 中止: 找不到 Lambda 內的目標節點。")
+            if isinstance(target_arg_node, cst.Lambda):
+                # 模式 1: LocalProxy(lambda: Y)
+                lambda_body = target_arg_node.body
+                if m.matches(lambda_body, m.Name()):
+                    target_node_for_fqn = lambda_body
+                elif m.matches(lambda_body, m.Attribute()):
+                    target_node_for_fqn = lambda_body
+                elif m.matches(lambda_body, m.Call(func=m.Name())):
+                    target_node_for_fqn = lambda_body.func
+                elif m.matches(lambda_body, m.Call(func=m.Attribute())):
+                    target_node_for_fqn = lambda_body.func
+            elif isinstance(target_arg_node, (cst.Name, cst.Attribute)):
+                # 模式 2: LocalProxy(_find_request) 或 LocalProxy(_cv_app)
+                target_node_for_fqn = target_arg_node
+            else:
+                # [!! 移除探針 !!]
                 return
 
-            target_fqn = self._get_fqn_from_node(target_node)  # [!!] 修正
+            if not target_node_for_fqn:
+                # [!! 移除探針 !!]
+                return
+
+            target_fqn = self._get_fqn_from_node(target_node_for_fqn)
             target_component = self._resolve_to_public_component(target_fqn)
-            logging.debug(f"[PROBE-P4] 目標 (Target) 原始 FQN: {target_fqn}")
-            logging.debug(f"[PROBE-P4] 目標 (Target) 解析為: {target_component}")
+            # [!! 移除探針 !!]
 
             if not target_component:
-                logging.debug("[PROBE-P4] 中止: 目標 component 為 None。")
-                return
+                if target_fqn and target_fqn.endswith("_cv_app"):
+                    target_component = "flask.globals.AppContextProxy"
+                # [!! P4 最終邏輯修復 !!]
+                # 目標也可能是模組級變數
+                elif target_fqn:
+                    # [!! 移除探針 !!]
+                    target_component = target_fqn
+                else:
+                    # [!! 移除探針 !!]
+                    return
 
+            # [!! 移除探針 !!]
+
+            # 步驟 4: 建立邊
             if proxy_component != target_component:
-                # 邊的方向：Proxy -> Target
                 edge = (proxy_component, target_component, "proxies")
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
@@ -410,7 +519,8 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
                         f"  [!! 語義連結成功 !!] 發現: {proxy_component} --proxies--> {target_component}"
                     )
             else:
-                logging.debug("[PROBE-P4] 中止: 最終 if 檢查失敗 (自我代理)。")
+                # [!! 移除探針 !!]
+                pass
 
         except Exception as e:
             logging.debug(f"處理 'proxies' 語義連結時出錯: {e}", exc_info=True)
@@ -419,10 +529,10 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
 # --- [協調器] ---
 
 def analyze_semantic_links(
-    repo_manager: FullRepoManager,
-    pre_scan_results: dict[str, Any],
-    root_pkg: str,
-    all_components: set[str],
+        repo_manager: FullRepoManager,
+        pre_scan_results: dict[str, Any],
+        root_pkg: str,
+        all_components: set[str],
 ) -> dict[str, Any]:
     """
     [第十階段]
@@ -440,6 +550,7 @@ def analyze_semantic_links(
     all_semantic_edges: set[tuple[str, str, str]] = set()
 
     for file_path_str in pre_scan_results:
+        # [!! 移除探針 !!]
         try:
             wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
 
