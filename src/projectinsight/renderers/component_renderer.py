@@ -108,6 +108,7 @@ def generate_component_dot_source(
     show_docstrings = node_styles.get("show_docstrings", True)
     focus_config = comp_graph_config.get("focus", {})
     entrypoints = set(focus_config.get("entrypoints", []))
+    semantic_config = comp_graph_config.get("semantic_analysis", {})
 
     layout_engine = comp_graph_config.get("layout_engine", "dot")
     aspect_ratio = layout_config.get("aspect_ratio", "auto")
@@ -139,6 +140,7 @@ def generate_component_dot_source(
         dot.attr(ratio=str(aspect_ratio))
 
     dot.attr("node", style="filled", fontname="Arial", fontsize="11")
+    # [修改] 預設邊 (呼叫邊) 樣式
     dot.attr("edge", color="gray50", arrowsize="0.7")
 
     if layer_info:
@@ -168,6 +170,7 @@ def generate_component_dot_source(
     edges = graph_data.get("edges", [])
     nodes_by_module = graph_data.get("nodes_by_module", {})
     docstrings = graph_data.get("docstrings", {})
+    semantic_edges = graph_data.get("semantic_edges", [])
 
     for node_fqn in nodes:
         docstring = docstrings.get(node_fqn) if show_docstrings else None
@@ -188,6 +191,25 @@ def generate_component_dot_source(
             label = node_fqn[len(f"{root_package}.") :] if node_fqn.startswith(f"{root_package}.") else node_fqn
             dot.node(node_fqn, label=label, shape="box", **node_attrs)
 
+    # [新增] 繪製語義邊 (Semantic Edges)
+    if semantic_config.get("enabled", True):
+        link_styles = semantic_config.get("links", {})
+        for u, v, label in semantic_edges:
+            style_config = link_styles.get(label, {})
+            # [!!] 已修復 (P2.2):
+            # 1. 移除 label=<<...>> (會導致 HTML 解析錯誤)
+            # 2. 改用 xlabel="..." (簡單字串)，更適合 ortho 佈局
+            dot.edge(
+                u,
+                v,
+                style=style_config.get("style", "dashed"),
+                color=style_config.get("color", "blue"),
+                xlabel=f" {style_config.get('label', label)} " if style_config.get("label") else label,
+                fontname="Microsoft YaHei",
+                fontsize="9",
+            )
+
+    # 繪製標準呼叫邊 (Call Edges)
     for edge in edges:
         dot.edge(edge[0], edge[1])
 
