@@ -355,19 +355,22 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
 
 def full_libcst_analysis(
-    project_path: Path,
+    repo_manager: FullRepoManager,
     root_pkg: str,
     pre_scan_results: dict[str, Any],
     initial_definition_map: dict[str, str],
     alias_exclude_patterns: list[str],
 ) -> dict[str, Any]:
     """
-    執行完整的 LibCST 分析，以建構確定性的呼叫圖。
+    [已重構]
+    執行 LibCST 分析以建構呼叫圖。
+    此函式現在接收一個已初始化的 FullRepoManager。
     """
     all_components: set[str] = set()
     full_docstring_map: dict[str, str] = {}
     call_graph: set[tuple[str, str]] = set()
 
+    # 從預掃描結果中填充基礎的組件和 docstrings
     for scan_data in pre_scan_results.values():
         visitor: CodeVisitor = scan_data["visitor"]
         all_components.update(visitor.components)
@@ -380,53 +383,39 @@ def full_libcst_analysis(
         except Exception as e:
             logging.debug(f"無法為 {visitor.file_path} 解析模組級 docstring: {e}")
 
-    repo_root = str(project_path.resolve())
-    file_paths_str = list(pre_scan_results.keys())
-    providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
+    logging.info("--- [階段 1/2] 開始掃描全域別名 (使用 LibCST) ---")
+    alias_map: dict[str, str] = {}
+    for file_path_str in pre_scan_results:
+        try:
+            wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+            alias_visitor = _AliasVisitor(wrapper, root_pkg, alias_exclude_patterns)
+            wrapper.visit(alias_visitor)
+            alias_map.update(alias_visitor.alias_map)
+        except Exception as e:
+            logging.warning(f"掃描別名時無法分析檔案 '{file_path_str}': {e}")
+    logging.info(f"--- 別名掃描完成，發現 {len(alias_map)} 個相關的全域別名 ---")
 
-    try:
-        logging.info("初始化 LibCST FullRepoManager 並解析快取...")
-        repo_manager = FullRepoManager(repo_root, file_paths_str, providers)
-        repo_manager.resolve_cache()
-        logging.info("LibCST 快取解析完成。")
+    logging.info("--- [階段 2/2] 開始建立正規化呼叫圖 (使用 LibCST) ---")
+    for file_path_str, scan_data in pre_scan_results.items():
+        try:
+            module_path = scan_data["visitor"].module_path
+            wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+            call_visitor = _CallGraphVisitor(
+                wrapper,
+                root_pkg,
+                all_components,
+                module_path,
+                alias_map,
+                file_path_str,
+            )
+            wrapper.visit(call_visitor)
+            call_graph.update(call_visitor.found_edges)
+        except cst.ParserSyntaxError as e:
+            logging.error(f"無法解析檔案 (語法錯誤) '{file_path_str}': {e.message}")
+        except Exception as e:
+            logging.warning(f"使用 LibCST 分析檔案 '{file_path_str}' 時失敗: {e}", exc_info=True)
 
-        logging.info("--- [階段 1/2] 開始掃描全域別名 ---")
-        alias_map: dict[str, str] = {}
-        for file_path_str in pre_scan_results:
-            try:
-                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-                alias_visitor = _AliasVisitor(wrapper, root_pkg, alias_exclude_patterns)
-                wrapper.visit(alias_visitor)
-                alias_map.update(alias_visitor.alias_map)
-            except Exception as e:
-                logging.warning(f"掃描別名時無法分析檔案 '{file_path_str}': {e}")
-        logging.info(f"--- 別名掃描完成，發現 {len(alias_map)} 個相關的全域別名 ---")
-
-        logging.info("--- [階段 2/2] 開始建立正規化呼叫圖 ---")
-        for file_path_str, scan_data in pre_scan_results.items():
-            try:
-                module_path = scan_data["visitor"].module_path
-                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-                call_visitor = _CallGraphVisitor(
-                    wrapper,
-                    root_pkg,
-                    all_components,
-                    module_path,
-                    alias_map,
-                    file_path_str,
-                )
-                wrapper.visit(call_visitor)
-                call_graph.update(call_visitor.found_edges)
-            except cst.ParserSyntaxError as e:
-                logging.error(f"無法解析檔案 (語法錯誤) '{file_path_str}': {e.message}")
-            except Exception as e:
-                logging.warning(f"使用 LibCST 分析檔案 '{file_path_str}' 時失敗: {e}", exc_info=True)
-
-    except Exception as e:
-        logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}", exc_info=True)
-        logging.error("呼叫圖分析已中止。")
-
-    logging.info(f"完整 LibCST 分析完成：找到 {len(all_components)} 個組件(類別與函式)，{len(call_graph)} 條函式呼叫。")
+    logging.info(f"完整 LibCST 呼叫圖分析完成：找到 {len(all_components)} 個組件，{len(call_graph)} 條呼叫邊。")
     return {
         "call_graph": call_graph,
         "components": all_components,
