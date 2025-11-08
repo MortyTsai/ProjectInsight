@@ -48,6 +48,35 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
             "min_nodes": 10,
             "max_search_depth": 7,
         },
+        # --- [新功能] 語義連結分析的預設配置 ---
+        "semantic_analysis": {
+            "enabled": True,  # 智慧預設為啟用
+            "links": {
+                "registers": {
+                    "style": "dashed",
+                    "color": "#1E90FF",  # Dodger Blue
+                    "label": "registers",
+                },
+                "inherits_from": {
+                    "style": "dotted",
+                    "color": "#32CD32",  # Lime Green
+                    "label": "inherits",
+                },
+                "decorates": {
+                    "style": "dashed",
+                    "color": "#FF8C00",  # Dark Orange
+                    "label": "decorates",
+                },
+                # [新增 P4 樣式]
+                "proxies": {
+                    "style": "dashed",
+                    "color": "#9932CC",  # Dark Orchid
+                    "label": "proxies",
+                    "arrowhead": "tee",
+                },
+            },
+        },
+        # --- [新功能] 結束 ---
     },
     "dynamic_behavior_graph": {
         "layout_engine": "dot",
