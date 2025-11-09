@@ -1,8 +1,4 @@
 # src/projectinsight/core/project_processor.py
-"""
-負責處理單一專案的完整分析、建構、渲染和報告生成流程。
-"""
-
 # 1. 標準庫導入
 import logging
 import os
@@ -64,7 +60,7 @@ class ProjectProcessor:
         if not target_project_root:
             return
 
-        root_package_name = self.config["root_package_name"]
+        root_package_name = self.config.get("root_package_name", "")
         analysis_types = self.config.get("analysis_types", [])
         if not isinstance(analysis_types, list) or not analysis_types:
             logging.warning(f"設定檔 '{self.config_path.name}' 中 'analysis_types' 為空或格式不正確，已跳過。")
@@ -80,7 +76,7 @@ class ProjectProcessor:
             return
         py_files = sorted(root_package_dir.rglob("*.py"))
         py_files_abs_str = [str(p.resolve()) for p in py_files]
-        logging.info(f"在根套件 '{root_package_name}' 中找到 {len(py_files)} 個 Python 檔案進行分析。")
+        logging.info(f"在根套件 '{root_package_name or '(專案根目錄)'}' 中找到 {len(py_files)} 個 Python 檔案進行分析。")
 
         logging.info("--- 開始執行專案體量預評估 ---")
         scan_results = component_parser.quick_ast_scan(python_source_root, py_files, root_package_name)
@@ -196,7 +192,7 @@ class ProjectProcessor:
     ):
         """執行單一類型的分析。"""
         logging.info(f"--- 開始執行分析: '{analysis_type}' ---")
-        root_package_name = self.config["root_package_name"]
+        root_package_name = self.config.get("root_package_name", "")
         vis_config = self.config.get("visualization", {})
         architecture_layers = self.config.get("architecture_layers", {})
 
@@ -207,7 +203,7 @@ class ProjectProcessor:
 
             semantic_edges: set[tuple[str, str, str]] = set()
             if semantic_config.get("enabled", True):
-                logging.info("--- [第十階段] 開始執行靜態語義連結分析 ---")
+                logging.info("--- 開始執行靜態語義連結分析 ---")
                 semantic_results = semantic_link_analyzer.analyze_semantic_links(
                     repo_manager=repo_manager,
                     pre_scan_results=pre_scan_results,
