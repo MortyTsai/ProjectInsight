@@ -285,7 +285,6 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
     def _resolve_to_public_component(self, fqn: str) -> str | None:
         """
-        [核心抽象邏輯]
         將任何 FQN（包括私有成員或方法）解析回其所屬的、最近的公開高階組件。
         """
         if not fqn:
@@ -362,7 +361,6 @@ def full_libcst_analysis(
     alias_exclude_patterns: list[str],
 ) -> dict[str, Any]:
     """
-    [已重構]
     執行 LibCST 分析以建構呼叫圖。
     此函式現在接收一個已初始化的 FullRepoManager。
     """
@@ -370,7 +368,6 @@ def full_libcst_analysis(
     full_docstring_map: dict[str, str] = {}
     call_graph: set[tuple[str, str]] = set()
 
-    # 從預掃描結果中填充基礎的組件和 docstrings
     for scan_data in pre_scan_results.values():
         visitor: CodeVisitor = scan_data["visitor"]
         all_components.update(visitor.components)
