@@ -36,7 +36,8 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
         for rule in rules:
             if rule.get("type") != "producer_consumer":
                 continue
-            for part in ("producer", "consumer"):
+            rule_parts = {k for k, v in rule.items() if isinstance(v, dict) and "role" in v}
+            for part in rule_parts:
                 if part in rule:
                     config = rule[part]
                     matcher = self._build_matcher(config)
@@ -177,15 +178,28 @@ def analyze_dynamic_behavior(
 
     links = []
     findings_by_rule_key: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+
+    all_roles: set[str] = set()
+    for rule in rules:
+        rule_parts = {k for k, v in rule.items() if isinstance(v, dict) and "role" in v}
+        for part in rule_parts:
+            all_roles.add(rule[part]["role"])
+
     for f in all_findings:
         key = (f["rule_name"], f["correlation_key"])
         if key not in findings_by_rule_key:
-            findings_by_rule_key[key] = {"producer": [], "consumer": []}
+            findings_by_rule_key[key] = {role: [] for role in all_roles}
         findings_by_rule_key[key][f["role"]].append(f)
 
     for _key, groups in findings_by_rule_key.items():
-        for p in groups["producer"]:
-            for c in groups["consumer"]:
+        # 未來可以擴展此處以支援更複雜的多對多連結
+        producers = groups.get("producer", [])
+        consumers = groups.get("consumer", [])
+        dispatchers = groups.get("dispatcher", [])
+        implementations = groups.get("implementation", [])
+
+        for p in producers:
+            for c in consumers:
                 links.append(
                     {
                         "source": p["caller_fqn"],
@@ -195,11 +209,21 @@ def analyze_dynamic_behavior(
                         "consumer_info": c,
                     }
                 )
+        for d in dispatchers:
+            for i in implementations:
+                links.append(
+                    {
+                        "source": d["caller_fqn"],
+                        "target": i["caller_fqn"],
+                        "label": d["correlation_key"],
+                        "producer_info": d,
+                        "consumer_info": i,
+                    }
+                )
 
-    producer_count = sum(len(g["producer"]) for g in findings_by_rule_key.values())
-    consumer_count = sum(len(g["consumer"]) for g in findings_by_rule_key.values())
+    producer_count = sum(len(g.get("producer", [])) for g in findings_by_rule_key.values())
+    consumer_count = sum(len(g.get("consumer", [])) for g in findings_by_rule_key.values())
     logging.info(
-        f"動態行為分析完成：發現 {producer_count} 個生產者實例，"
-        f"{consumer_count} 個消費者實例，建立了 {len(links)} 條連結。"
+        f"動態行為分析完成：發現 {len(all_findings)} 個事件，建立了 {len(links)} 條連結。"
     )
     return {"links": links}
