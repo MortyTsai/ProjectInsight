@@ -1,3 +1,8 @@
+# src/projectinsight/core/project_processor.py
+"""
+負責處理單一專案的完整分析、建構、渲染和報告生成流程。
+"""
+
 # 1. 標準庫導入
 import logging
 import os
@@ -6,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 # 2. 第三方庫導入
-from libcst.metadata import (  # [新增]
+from libcst.metadata import (
     FullRepoManager,
     FullyQualifiedNameProvider,
     ParentNodeProvider,
@@ -31,7 +36,7 @@ from projectinsight.renderers.dynamic_behavior_renderer import (
     render_dynamic_behavior_graph,
 )
 from projectinsight.reporters.markdown_reporter import generate_markdown_report
-from projectinsight.semantics import dynamic_behavior_analyzer, semantic_link_analyzer  # [修改]
+from projectinsight.semantics import dynamic_behavior_analyzer, semantic_link_analyzer
 
 ASSESSMENT_THRESHOLDS = {
     "warn_definitions": 3000,
@@ -74,7 +79,7 @@ class ProjectProcessor:
             logging.error(f"根套件目錄不存在: {root_package_dir}")
             return
         py_files = sorted(root_package_dir.rglob("*.py"))
-        py_files_abs_str = [str(p.resolve()) for p in py_files]  # [新增]
+        py_files_abs_str = [str(p.resolve()) for p in py_files]
         logging.info(f"在根套件 '{root_package_name}' 中找到 {len(py_files)} 個 Python 檔案進行分析。")
 
         logging.info("--- 開始執行專案體量預評估 ---")
@@ -89,9 +94,6 @@ class ProjectProcessor:
             self.config_loader = ConfigLoader(self.config_path)
             self.config = self.config_loader.config
 
-        # --- [重構] LibCST Manager 初始化 ---
-        # 為了效能和職責分離 (P0.3)，我們在此處初始化 Manager 一次 [cite: 19]，
-        # 然後將其傳遞給所有需要它的 LibCST 分析器 。
         logging.info("初始化 LibCST FullRepoManager 並解析快取...")
         providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
         try:
@@ -101,13 +103,11 @@ class ProjectProcessor:
         except Exception as e:
             logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}", exc_info=True)
             return
-        # --- [重構] 結束 ---
 
         logging.info("--- 開始執行完整程式碼解析 (使用 LibCST 引擎) ---")
         parser_settings = self.config.get("parser_settings", {})
         alias_resolution_settings = parser_settings.get("alias_resolution", {})
 
-        # [修改] 傳入 repo_manager
         parser_results = component_parser.full_libcst_analysis(
             repo_manager=repo_manager,
             root_pkg=root_package_name,
@@ -127,8 +127,8 @@ class ProjectProcessor:
                 docstring_map,
                 report_analysis_results,
                 output_dir,
-                scan_results["pre_scan_results"],  # [新增]
-                repo_manager,  # [新增]
+                scan_results["pre_scan_results"],
+                repo_manager,
             )
 
         if report_analysis_results:
@@ -191,8 +191,8 @@ class ProjectProcessor:
         docstring_map: dict[str, str],
         report_analysis_results: dict[str, Any],
         output_dir: Path,
-        pre_scan_results: dict[str, Any],  # [新增]
-        repo_manager: FullRepoManager,  # [新增]
+        pre_scan_results: dict[str, Any],
+        repo_manager: FullRepoManager,
     ):
         """執行單一類型的分析。"""
         logging.info(f"--- 開始執行分析: '{analysis_type}' ---")
@@ -203,10 +203,10 @@ class ProjectProcessor:
         if analysis_type == "component_interaction":
             comp_graph_config = vis_config["component_interaction_graph"]
             layout_config = comp_graph_config.get("layout", {})
-            semantic_config = comp_graph_config.get("semantic_analysis", {})  # [新增]
+            semantic_config = comp_graph_config.get("semantic_analysis", {})
 
-            semantic_edges: set[tuple[str, str, str]] = set()  # [新增]
-            if semantic_config.get("enabled", True):  # [新增]
+            semantic_edges: set[tuple[str, str, str]] = set()
+            if semantic_config.get("enabled", True):
                 logging.info("--- [第十階段] 開始執行靜態語義連結分析 ---")
                 semantic_results = semantic_link_analyzer.analyze_semantic_links(
                     repo_manager=repo_manager,
@@ -226,7 +226,7 @@ class ProjectProcessor:
                 show_internal_calls=layout_config.get("show_internal_calls", False),
                 filtering_config=comp_graph_config.get("filtering"),
                 focus_config=comp_graph_config.get("focus"),
-                semantic_edges=semantic_edges,  # [新增]
+                semantic_edges=semantic_edges,
             )
             dot_source = generate_component_dot_source(
                 graph_data, root_package_name, architecture_layers, comp_graph_config
