@@ -1,4 +1,17 @@
 # src/projectinsight/core/project_processor.py
+"""
+ProjectInsight 的核心處理引擎。
+
+此模組包含 `ProjectProcessor` 類別，作為整個專案分析流程的總指揮。
+它負責以下核心職責：
+1.  載入並解析專案設定檔。
+2.  準備並驗證所有必要的路徑。
+3.  協調執行「專案體量預評估」，並在必要時啟動「互動式精靈」。
+4.  建立並管理 LibCST 的 `FullRepoManager`，為所有解析器提供統一的語法樹上下文。
+5.  根據設定，依次調用 `parsers`, `semantics`, `builders`, `renderers`, 和 `reporters`
+    中的各個子系統，完成從原始碼到最終報告的完整轉換流程。
+6.  實現了對不同專案結構（如 `src` 佈局和扁平佈局）的健壯適應性。
+"""
 # 1. 標準庫導入
 import logging
 import os
@@ -33,6 +46,7 @@ from projectinsight.renderers.dynamic_behavior_renderer import (
 )
 from projectinsight.reporters.markdown_reporter import generate_markdown_report
 from projectinsight.semantics import dynamic_behavior_analyzer, semantic_link_analyzer
+from projectinsight.utils.path_utils import find_top_level_packages
 
 ASSESSMENT_THRESHOLDS = {
     "warn_definitions": 3000,
@@ -57,10 +71,10 @@ class ProjectProcessor:
         logging.info(f"========== 開始處理專案: {self.project_name} ==========")
 
         target_project_root, python_source_root, output_dir = self._prepare_paths()
-        if not target_project_root:
+        if not target_project_root or not python_source_root:
+            logging.error("準備路徑時失敗，終止處理。")
             return
 
-        root_package_name = self.config.get("root_package_name", "")
         analysis_types = self.config.get("analysis_types", [])
         if not isinstance(analysis_types, list) or not analysis_types:
             logging.warning(f"設定檔 '{self.config_path.name}' 中 'analysis_types' 為空或格式不正確，已跳過。")
@@ -68,18 +82,48 @@ class ProjectProcessor:
 
         logging.info(f"專案報告根目錄: {target_project_root}")
         logging.info(f"Python 原始碼分析根目錄: {python_source_root}")
+
+        context_packages: list[str]
+        root_package_name_override = self.config.get("root_package_name")
+        if root_package_name_override:
+            context_packages = [root_package_name_override]
+            logging.info(f"使用設定檔中指定的專家覆寫 `root_package_name`: {context_packages}")
+        else:
+            context_packages = find_top_level_packages(python_source_root)
+            logging.info(f"自動偵測到頂層套件/模組: {context_packages}")
+
+        if not context_packages:
+            logging.error("無法確定專案的解析上下文。請檢查專案結構，或在設定檔中手動指定 `root_package_name`。")
+            return
+
         logging.info(f"將執行以下分析: {', '.join(analysis_types)}")
 
-        root_package_dir = python_source_root / root_package_name
-        if not root_package_dir.is_dir():
-            logging.error(f"根套件目錄不存在: {root_package_dir}")
-            return
-        py_files = sorted(root_package_dir.rglob("*.py"))
+        py_files_in_context: set[Path] = set()
+        all_py_files_in_root = list(python_source_root.rglob("*.py"))
+        context_packages_tuple = tuple(context_packages)
+
+        for py_file in all_py_files_in_root:
+            try:
+                relative_path_parts = py_file.relative_to(python_source_root).parts
+                if not relative_path_parts:
+                    continue
+
+                if relative_path_parts[-1] == "__init__.py":
+                    module_path = ".".join(relative_path_parts[:-1])
+                else:
+                    module_path = ".".join(relative_path_parts).removesuffix(".py")
+
+                if module_path.startswith(context_packages_tuple):
+                    py_files_in_context.add(py_file)
+            except ValueError:
+                continue
+        py_files = sorted(py_files_in_context)
+
         py_files_abs_str = [str(p.resolve()) for p in py_files]
-        logging.info(f"在根套件 '{root_package_name or '(專案根目錄)'}' 中找到 {len(py_files)} 個 Python 檔案進行分析。")
+        logging.info(f"在解析上下文中找到 {len(py_files)} 個 Python 檔案進行分析。")
 
         logging.info("--- 開始執行專案體量預評估 ---")
-        scan_results = component_parser.quick_ast_scan(python_source_root, py_files, root_package_name)
+        scan_results = component_parser.quick_ast_scan(python_source_root, py_files, context_packages)
 
         if self._needs_wizard(scan_results["definition_count"]):
             wizard = InteractiveWizard(self.config_path, scan_results, target_project_root)
@@ -106,7 +150,7 @@ class ProjectProcessor:
 
         parser_results = component_parser.full_libcst_analysis(
             repo_manager=repo_manager,
-            root_pkg=root_package_name,
+            context_packages=context_packages,
             pre_scan_results=scan_results["pre_scan_results"],
             initial_definition_map=scan_results["definition_to_module_map"],
             alias_exclude_patterns=alias_resolution_settings.get("exclude_patterns", []),
@@ -125,6 +169,7 @@ class ProjectProcessor:
                 output_dir,
                 scan_results["pre_scan_results"],
                 repo_manager,
+                context_packages,
             )
 
         if report_analysis_results:
@@ -149,6 +194,8 @@ class ProjectProcessor:
 
         config_dir = self.config_path.parent
         target_project_root = (config_dir / target_project_path_str).resolve()
+        if not output_dir_str:
+            return None, None, None
         output_dir = (config_dir / output_dir_str).resolve()
         os.makedirs(output_dir, exist_ok=True)
 
@@ -189,10 +236,11 @@ class ProjectProcessor:
         output_dir: Path,
         pre_scan_results: dict[str, Any],
         repo_manager: FullRepoManager,
+        context_packages: list[str],
     ):
         """執行單一類型的分析。"""
         logging.info(f"--- 開始執行分析: '{analysis_type}' ---")
-        root_package_name = self.config.get("root_package_name", "")
+        root_package_name = self.config.get("root_package_name")
         vis_config = self.config.get("visualization", {})
         architecture_layers = self.config.get("architecture_layers", {})
 
@@ -207,7 +255,7 @@ class ProjectProcessor:
                 semantic_results = semantic_link_analyzer.analyze_semantic_links(
                     repo_manager=repo_manager,
                     pre_scan_results=pre_scan_results,
-                    root_pkg=root_package_name,
+                    context_packages=context_packages,
                     all_components=parser_results.get("components", set()),
                 )
                 semantic_edges = semantic_results.get("semantic_edges", set())
@@ -225,7 +273,7 @@ class ProjectProcessor:
                 semantic_edges=semantic_edges,
             )
             dot_source = generate_component_dot_source(
-                graph_data, root_package_name, architecture_layers, comp_graph_config
+                graph_data, self.project_name, root_package_name, architecture_layers, comp_graph_config
             )
             report_analysis_results["component_dot_source"] = dot_source
             layout_engine = comp_graph_config.get("layout_engine", "dot")
@@ -233,15 +281,17 @@ class ProjectProcessor:
             render_component_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
+                project_name=self.project_name,
                 root_package=root_package_name,
                 layer_info=architecture_layers,
                 comp_graph_config=comp_graph_config,
             )
 
         elif analysis_type == "auto_concept_flow":
+            display_package_name = self.config.get("root_package_name", context_packages[0])
             auto_concept_config = self.config.get("auto_concept_flow", {})
             track_groups = seed_discoverer.discover_seeds(
-                root_pkg=root_package_name,
+                context_packages=context_packages,
                 py_files=py_files,
                 project_root=python_source_root,
                 exclude_patterns=auto_concept_config.get("exclude_patterns", []),
@@ -251,24 +301,25 @@ class ProjectProcessor:
                 return
 
             analysis_results = concept_flow_analyzer.analyze_concept_flow(
-                root_pkg=root_package_name,
+                context_packages=context_packages,
                 py_files=py_files,
                 track_groups=track_groups,
                 project_root=python_source_root,
             )
             graph_data = build_concept_flow_graph_data(analysis_results)
-            dot_source = generate_concept_flow_dot_source(graph_data, root_package_name, "sfdp")
+            dot_source = generate_concept_flow_dot_source(graph_data, display_package_name, "sfdp")
             report_analysis_results["concept_flow_dot_source"] = dot_source
             png_output_path = output_dir / f"{self.project_name}_concept_flow_sfdp.png"
             render_concept_flow_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
-                root_package=root_package_name,
+                root_package=display_package_name,
                 layout_engine="sfdp",
                 dpi="200",
             )
 
         elif analysis_type == "dynamic_behavior":
+            display_package_name = self.config.get("root_package_name", context_packages[0])
             dynamic_behavior_config = self.config.get("dynamic_behavior_analysis", {})
             rules = dynamic_behavior_config.get("rules", [])
             if not rules:
@@ -282,7 +333,7 @@ class ProjectProcessor:
             graph_data = build_dynamic_behavior_graph_data(analysis_results)
             dot_source = generate_dynamic_behavior_dot_source(
                 graph_data,
-                root_package_name,
+                display_package_name,
                 db_graph_config,
                 dynamic_behavior_config.get("roles", {}),
                 docstring_map,
@@ -293,7 +344,7 @@ class ProjectProcessor:
             render_dynamic_behavior_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
-                root_package=root_package_name,
+                root_package=display_package_name,
                 db_graph_config=db_graph_config,
                 roles_config=dynamic_behavior_config.get("roles", {}),
                 docstring_map=docstring_map,
