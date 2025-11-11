@@ -32,11 +32,15 @@ class SeedDiscoveryVisitor(cst.CSTVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.discovered_seeds: set[str] = set()
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def visit_Assign(self, node: cst.Assign) -> None:
         scope = self.wrapper.resolve(ScopeProvider).get(node)
@@ -49,14 +53,15 @@ class SeedDiscoveryVisitor(cst.CSTVisitor):
                     fqns = self.wrapper.resolve(FullyQualifiedNameProvider).get(target.target)
                     if fqns:
                         fqn = next(iter(fqns)).name
-                        normalized_fqn = _normalize_fqn(fqn, self.root_pkg)
-                        self.discovered_seeds.add(normalized_fqn)
+                        if self._is_internal_fqn(fqn):
+                            normalized_fqn = _normalize_fqn(fqn, self.context_packages[0])
+                            self.discovered_seeds.add(normalized_fqn)
                 except (KeyError, IndexError):
                     continue
 
 
 def discover_seeds(
-    root_pkg: str,
+    context_packages: list[str],
     py_files: list[Path],
     project_root: Path,
     exclude_patterns: list[str],
@@ -82,7 +87,7 @@ def discover_seeds(
     for file_path_str in file_paths_str:
         try:
             wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-            visitor = SeedDiscoveryVisitor(wrapper, root_pkg)
+            visitor = SeedDiscoveryVisitor(wrapper, context_packages)
             wrapper.module.visit(visitor)
             discovered_fqns.update(visitor.discovered_seeds)
         except Exception as e:

@@ -23,10 +23,10 @@ from libcst.metadata import (
 # (無)
 
 
-def _normalize_fqn(name: str, root_pkg: str) -> str:
+def _normalize_fqn(name: str, display_pkg: str) -> str:
     """正規化 FQN，使其與使用者定義的格式一致。"""
-    if root_pkg in name:
-        name = name[name.find(root_pkg) :]
+    if display_pkg in name:
+        name = name[name.find(display_pkg) :]
     return name.replace(".<locals>", "")
 
 
@@ -37,11 +37,11 @@ class ConceptVisitor(cst.CSTVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
 
-    def __init__(self, known_concepts: set[str], wrapper: MetadataWrapper, root_pkg: str):
+    def __init__(self, known_concepts: set[str], wrapper: MetadataWrapper, display_pkg: str):
         super().__init__()
         self.known_concepts = known_concepts
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.display_pkg = display_pkg
         self.flow_edges: set[tuple[str, str]] = set()
         self.newly_discovered_concepts: set[str] = set()
 
@@ -50,7 +50,7 @@ class ConceptVisitor(cst.CSTVisitor):
         try:
             fqns = self.wrapper.resolve(FullyQualifiedNameProvider).get(node)
             if fqns:
-                fqn = _normalize_fqn(next(iter(fqns)).name, self.root_pkg)
+                fqn = _normalize_fqn(next(iter(fqns)).name, self.display_pkg)
                 if fqn in self.known_concepts:
                     return fqn
         except (KeyError, IndexError):
@@ -71,7 +71,7 @@ class ConceptVisitor(cst.CSTVisitor):
             try:
                 usage_fqns = self.wrapper.resolve(FullyQualifiedNameProvider)[usage_context_node]
                 if usage_fqns:
-                    usage_fqn = _normalize_fqn(next(iter(usage_fqns)).name, self.root_pkg)
+                    usage_fqn = _normalize_fqn(next(iter(usage_fqns)).name, self.display_pkg)
                     edge = (source_concept_fqn, usage_fqn)
                     if edge[0] != edge[1] and edge not in self.flow_edges:
                         self.flow_edges.add(edge)
@@ -96,7 +96,7 @@ class ConceptVisitor(cst.CSTVisitor):
 
 
 def analyze_concept_flow(
-    root_pkg: str,
+    context_packages: list[str],
     py_files: list[Path],
     track_groups: list[dict[str, Any]],
     project_root: Path,
@@ -120,7 +120,9 @@ def analyze_concept_flow(
         logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}")
         return {}
 
-    known_concepts: set[str] = {_normalize_fqn(g["from_object"], root_pkg) for g in track_groups}
+    # [註] 概念流動圖的正規化，暫時使用 context_packages 的第一個元素
+    display_pkg = context_packages[0] if context_packages else ""
+    known_concepts: set[str] = {_normalize_fqn(g["from_object"], display_pkg) for g in track_groups}
 
     iteration = 0
     max_iterations = 10
@@ -134,7 +136,7 @@ def analyze_concept_flow(
         for file_path_str in file_paths_str:
             try:
                 wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-                visitor = ConceptVisitor(known_concepts, wrapper, root_pkg)
+                visitor = ConceptVisitor(known_concepts, wrapper, display_pkg)
                 wrapper.module.visit(visitor)
 
                 all_edges.update(visitor.flow_edges)
