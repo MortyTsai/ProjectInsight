@@ -221,9 +221,5 @@ def analyze_dynamic_behavior(
                     }
                 )
 
-    producer_count = sum(len(g.get("producer", [])) for g in findings_by_rule_key.values())
-    consumer_count = sum(len(g.get("consumer", [])) for g in findings_by_rule_key.values())
-    logging.info(
-        f"動態行為分析完成：發現 {len(all_findings)} 個事件，建立了 {len(links)} 條連結。"
-    )
+    logging.info(f"動態行為分析完成：發現 {len(all_findings)} 個事件，建立了 {len(links)} 條連結。")
     return {"links": links}
