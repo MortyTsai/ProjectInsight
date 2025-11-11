@@ -14,7 +14,7 @@ import yaml
 from ruamel.yaml import YAML
 
 # 3. 本專案導入
-# (無)
+from projectinsight.utils.path_utils import find_top_level_packages
 
 DEFAULT_PARSER_CONFIG: dict[str, Any] = {
     "alias_resolution": {
@@ -122,35 +122,32 @@ class ConfigLoader:
         user_vis_config = self.config.get("visualization", {})
         self.config["visualization"] = self._merge_configs(DEFAULT_VIS_CONFIG.copy(), user_vis_config)
 
-        root_package_path = self.get_root_package_path()
-        if root_package_path:
-            auto_discovered_layers = self._discover_architecture_layers(root_package_path)
-            user_provided_layers = self.config.get("architecture_layers", {})
-            self.config["architecture_layers"] = {**auto_discovered_layers, **user_provided_layers}
-
-            root_package_name = self.config.get("root_package_name", "root")
-            if "(root)" not in self.config["architecture_layers"]:
-                self.config["architecture_layers"]["(root)"] = {
-                    "name": f"{root_package_name} (root)",
-                    "color": "#EAEAEA",
-                }
-
-    def get_root_package_path(self) -> Path | None:
-        """根據設定計算並回傳根套件的絕對路徑。"""
         target_project_path_str = self.config.get("target_project_path")
-        root_package_name = self.config.get("root_package_name")
-
-        if not target_project_path_str or not root_package_name:
-            logging.error(f"設定檔 '{self.config_path.name}' 中缺少 'target_project_path' 或 'root_package_name'。")
-            return None
+        if not target_project_path_str:
+            return
 
         config_dir = self.config_path.parent
         target_project_root = (config_dir / target_project_path_str).resolve()
-
         potential_src_dir = target_project_root / "src"
         python_source_root = potential_src_dir if potential_src_dir.is_dir() else target_project_root
 
-        return python_source_root / root_package_name
+        root_package_name = self.config.get("root_package_name")
+        if root_package_name:
+            layers_base_path = python_source_root / root_package_name
+            auto_discovered_layers = self._discover_sub_packages(layers_base_path)
+        else:
+            top_level_items = find_top_level_packages(python_source_root)
+            auto_discovered_layers = self._assign_colors_to_layers(top_level_items)
+
+        user_provided_layers = self.config.get("architecture_layers", {})
+        self.config["architecture_layers"] = {**auto_discovered_layers, **user_provided_layers}
+
+        root_display_name = root_package_name or self.config_path.stem.replace("_test", "")
+        if "(root)" not in self.config["architecture_layers"]:
+            self.config["architecture_layers"]["(root)"] = {
+                "name": f"{root_display_name} (root)",
+                "color": "#EAEAEA",
+            }
 
     @staticmethod
     def _merge_configs(default: dict, user: dict) -> dict:
@@ -176,31 +173,29 @@ class ConfigLoader:
             palette.append(f"#{rgb_int[0]:02x}{rgb_int[1]:02x}{rgb_int[2]:02x}")
         return palette
 
-    def _discover_architecture_layers(self, root_package_path: Path) -> dict[str, Any]:
-        """自動掃描根套件目錄，並使用演算法調色盤為其分配顏色。"""
-        if not root_package_path.is_dir():
+    def _assign_colors_to_layers(self, layer_keys: list[str]) -> dict[str, Any]:
+        """為給定的層級名稱列表分配顏色。"""
+        if not layer_keys:
             return {}
+        palette = self._generate_color_palette(len(layer_keys))
+        auto_layers = {layer_key: {"color": palette[i]} for i, layer_key in enumerate(layer_keys)}
+        logging.info(f"自動為 {len(auto_layers)} 個架構層級分配顏色: {', '.join(auto_layers.keys())}")
+        return auto_layers
 
-        auto_layers = {}
+    def _discover_sub_packages(self, layers_base_path: Path) -> dict[str, Any]:
+        """自動掃描給定目錄的子套件，並為其分配顏色。"""
+        if not layers_base_path.is_dir():
+            return {}
         try:
             sub_packages = [
                 item.name
-                for item in sorted(root_package_path.iterdir())
+                for item in sorted(layers_base_path.iterdir())
                 if item.is_dir() and (item / "__init__.py").exists()
             ]
-
-            if not sub_packages:
-                return {}
-
-            palette = self._generate_color_palette(len(sub_packages))
-            for i, layer_key in enumerate(sub_packages):
-                auto_layers[layer_key] = {"color": palette[i]}
-
-            logging.info(f"自動發現 {len(auto_layers)} 個架構層級: {', '.join(auto_layers.keys())}")
+            return self._assign_colors_to_layers(sub_packages)
         except OSError as e:
             logging.warning(f"自動發現架構層級時發生錯誤: {e}")
-
-        return auto_layers
+            return {}
 
     @staticmethod
     def update_config_file(config_path: Path, updates: dict[str, Any]):
