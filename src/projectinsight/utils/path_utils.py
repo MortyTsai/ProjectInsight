@@ -5,6 +5,7 @@
 
 # 1. 標準庫導入
 import importlib.resources
+import logging
 from pathlib import Path
 
 # 2. 第三方庫導入
@@ -37,3 +38,31 @@ def find_project_root(marker: str = "pyproject.toml") -> Path:
         current_path = current_path.parent
 
     raise FileNotFoundError(f"無法從 '{anchor}' 或當前工作目錄向上找到專案根目錄標記檔案: {marker}")
+
+
+def find_top_level_packages(source_root: Path) -> list[str]:
+    """
+    掃描給定的原始碼根目錄，自動偵測所有頂層的 Python 套件和模組。
+
+    Args:
+        source_root: 要掃描的 Python 原始碼根目錄。
+
+    Returns:
+        一個包含所有頂層套件和模組名稱的字串列表。
+    """
+    if not source_root.is_dir():
+        logging.warning(f"提供的原始碼路徑不是一個有效目錄: {source_root}")
+        return []
+
+    top_level_items = []
+    try:
+        for item in source_root.iterdir():
+            if item.is_dir() and (item / "__init__.py").exists():
+                top_level_items.append(item.name)
+            elif item.is_file() and item.suffix == ".py" and item.stem != "__init__":
+                top_level_items.append(item.stem)
+    except OSError as e:
+        logging.error(f"掃描頂層套件時發生檔案系統錯誤: {e}")
+        return []
+
+    return sorted(top_level_items)
