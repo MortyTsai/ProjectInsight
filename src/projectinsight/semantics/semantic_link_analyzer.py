@@ -36,12 +36,16 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str, all_components: set[str]):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.all_components = all_components
         self.semantic_edges: set[tuple[str, str, str]] = set()
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_public_component(self, fqn: str | None) -> str | None:
         if not fqn:
@@ -98,7 +102,7 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
                 registree_node = element.value
                 registree_fqn = self._get_fqn_from_node(registree_node)
 
-                if not registree_fqn or not registree_fqn.startswith(self.root_pkg):
+                if not registree_fqn or not self._is_internal_fqn(registree_fqn):
                     continue
 
                 registree_component = self._resolve_to_public_component(registree_fqn)
@@ -121,12 +125,16 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str, all_components: set[str]):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.all_components = all_components
         self.semantic_edges: set[tuple[str, str, str]] = set()
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_public_component(self, fqn: str | None) -> str | None:
         if not fqn:
@@ -159,7 +167,7 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
             child_fqn = self._get_fqn_from_node(node.name)
             child_component = self._resolve_to_public_component(child_fqn)
 
-            if not child_component or not child_fqn.startswith(self.root_pkg):
+            if not child_component or not child_fqn or not self._is_internal_fqn(child_fqn):
                 return
 
             for base in node.bases:
@@ -191,12 +199,16 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str, all_components: set[str]):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.all_components = all_components
         self.semantic_edges: set[tuple[str, str, str]] = set()
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_public_component(self, fqn: str | None) -> str | None:
         if not fqn:
@@ -233,8 +245,10 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             child_fqn = self._get_fqn_from_node(parent_def.name)
             child_component = self._resolve_to_public_component(child_fqn)
 
-            if not child_component or (
-                not child_fqn.startswith(self.root_pkg) and not child_fqn.startswith("builtins")
+            if (
+                not child_component
+                or not child_fqn
+                or not (self._is_internal_fqn(child_fqn) or child_fqn.startswith("builtins"))
             ):
                 return
 
@@ -275,10 +289,10 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str, all_components: set[str]):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.all_components = all_components
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
@@ -436,13 +450,17 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str, all_components: set[str]):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.all_components = all_components
         self.semantic_edges: set[tuple[str, str, str]] = set()
         self.strategy_lists: dict[str, str] = {}
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_public_component(self, fqn: str | None) -> str | None:
         if not fqn:
@@ -496,7 +514,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
             strategy_components_in_list = []
             for element in collection_node.elements:
                 strategy_fqn = self._get_fqn_from_node(element.value)
-                if not strategy_fqn or not strategy_fqn.startswith(self.root_pkg):
+                if not strategy_fqn or not self._is_internal_fqn(strategy_fqn):
                     continue
                 strategy_component = self._resolve_to_public_component(strategy_fqn)
                 if strategy_component:
@@ -539,7 +557,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
                 return
             appended_node = node.args[0].value
             appended_fqn = self._get_fqn_from_node(appended_node)
-            if not appended_fqn or not appended_fqn.startswith(self.root_pkg):
+            if not appended_fqn or not self._is_internal_fqn(appended_fqn):
                 return
 
             strategy_component = self._resolve_to_public_component(appended_fqn)
@@ -557,7 +575,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
 def analyze_semantic_links(
     repo_manager: FullRepoManager,
     pre_scan_results: dict[str, Any],
-    root_pkg: str,
+    context_packages: list[str],
     all_components: set[str],
 ) -> dict[str, Any]:
     """
@@ -566,7 +584,7 @@ def analyze_semantic_links(
     Args:
         repo_manager: 已初始化的 LibCST FullRepoManager。
         pre_scan_results: 來自 quick_ast_scan 的結果，用於迭代檔案。
-        root_pkg: 根套件名稱。
+        context_packages: 包含所有頂層套件/模組的列表。
         all_components: 來自 component_parser 的所有高階組件 FQN 集合。
 
     Returns:
@@ -579,11 +597,11 @@ def analyze_semantic_links(
             wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
 
             visitors = [
-                _CollectionRegistrationVisitor(wrapper, root_pkg, all_components),
-                _InheritanceVisitor(wrapper, root_pkg, all_components),
-                _DecoratorVisitor(wrapper, root_pkg, all_components),
-                _ProxyVisitor(wrapper, root_pkg, all_components),
-                _StrategyRegistrationVisitor(wrapper, root_pkg, all_components),
+                _CollectionRegistrationVisitor(wrapper, context_packages, all_components),
+                _InheritanceVisitor(wrapper, context_packages, all_components),
+                _DecoratorVisitor(wrapper, context_packages, all_components),
+                _ProxyVisitor(wrapper, context_packages, all_components),
+                _StrategyRegistrationVisitor(wrapper, context_packages, all_components),
             ]
 
             for visitor in visitors:
