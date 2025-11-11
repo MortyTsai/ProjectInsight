@@ -29,10 +29,10 @@ from libcst.metadata import (
 class CodeVisitor(ast.NodeVisitor):
     """一個 AST 訪問者，用於收集程式碼中的各種定義和引用。"""
 
-    def __init__(self, module_path: str, file_path: Path, root_package_name: str):
+    def __init__(self, module_path: str, file_path: Path, context_packages: list[str]):
         self.module_path = module_path
         self.file_path = file_path
-        self.root_package_name = root_package_name
+        self.context_packages = context_packages
         self.current_scope = [self.module_path]
         self.definitions: set[str] = set()
         self.components: set[str] = set()
@@ -42,10 +42,14 @@ class CodeVisitor(ast.NodeVisitor):
         self.has_main_block = False
         self.internal_imports: set[str] = set()
 
+    def _is_internal_module(self, module_name: str) -> bool:
+        """檢查一個模組名稱是否屬於專案的內部上下文。"""
+        return any(module_name.startswith(pkg) for pkg in self.context_packages)
+
     def visit_Import(self, node: ast.Import):
         """處理 'import a.b.c' 這種形式的導入。"""
         for alias in node.names:
-            if alias.name.startswith(self.root_package_name):
+            if self._is_internal_module(alias.name):
                 self.internal_imports.add(alias.name)
         self.generic_visit(node)
 
@@ -58,9 +62,9 @@ class CodeVisitor(ast.NodeVisitor):
             if node.module:
                 base.append(node.module)
             import_path = ".".join(base)
-            if import_path.startswith(self.root_package_name):
+            if self._is_internal_module(import_path):
                 self.internal_imports.add(import_path)
-        elif node.module and node.module.startswith(self.root_package_name):
+        elif node.module and self._is_internal_module(node.module):
             self.internal_imports.add(node.module)
         self.generic_visit(node)
 
@@ -117,7 +121,7 @@ class CodeVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def quick_ast_scan(project_path: Path, py_files: list[Path], root_package_name: str) -> dict[str, Any]:
+def quick_ast_scan(project_path: Path, py_files: list[Path], context_packages: list[str]) -> dict[str, Any]:
     """
     執行一個快速的、無 Jedi 的 AST 掃描，以評估專案體量。
     """
@@ -142,7 +146,7 @@ def quick_ast_scan(project_path: Path, py_files: list[Path], root_package_name: 
                 parts[-1] = relative_path.stem
             module_name = ".".join(parts)
 
-            visitor = CodeVisitor(module_name, file_path, root_package_name)
+            visitor = CodeVisitor(module_name, file_path, context_packages)
             visitor.visit(tree)
             total_definitions += visitor.definition_count
             pre_scan_results[str(file_path)] = {
@@ -193,17 +197,21 @@ class _AliasVisitor(m.MatcherDecoratableVisitor):
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
 
-    def __init__(self, wrapper: MetadataWrapper, root_pkg: str, exclude_patterns: list[str]):
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], exclude_patterns: list[str]):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.exclude_patterns = exclude_patterns
         self.alias_map: dict[str, str] = {}
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _add_alias(self, alias_fqn: str, real_fqn: str):
         is_excluded = any(fnmatch.fnmatch(alias_fqn, pattern) for pattern in self.exclude_patterns)
 
-        if not is_excluded and real_fqn.startswith(self.root_pkg) and alias_fqn != real_fqn:
+        if not is_excluded and self._is_internal_fqn(real_fqn) and alias_fqn != real_fqn:
             self.alias_map[alias_fqn] = real_fqn
             logging.debug(f"  [別名發現] {alias_fqn} -> {real_fqn}")
 
@@ -268,7 +276,7 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
     def __init__(
         self,
         wrapper: MetadataWrapper,
-        root_pkg: str,
+        context_packages: list[str],
         all_components: set[str],
         module_path: str,
         alias_map: dict[str, str],
@@ -276,12 +284,16 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
     ):
         super().__init__()
         self.wrapper = wrapper
-        self.root_pkg = root_pkg
+        self.context_packages = context_packages
         self.all_components = all_components
         self.module_path = module_path
         self.alias_map = alias_map
         self.file_path = file_path
         self.found_edges: set[tuple[str, str]] = set()
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_public_component(self, fqn: str) -> str | None:
         """
@@ -321,7 +333,7 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
             for fqn_obj in callee_fqns:
                 original_callee_fqn = fqn_obj.name
-                if not original_callee_fqn.startswith(self.root_pkg):
+                if not self._is_internal_fqn(original_callee_fqn):
                     continue
 
                 normalized_callee_fqn = _normalize_call_fqn(original_callee_fqn, self.alias_map)
@@ -355,7 +367,7 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
 def full_libcst_analysis(
     repo_manager: FullRepoManager,
-    root_pkg: str,
+    context_packages: list[str],
     pre_scan_results: dict[str, Any],
     initial_definition_map: dict[str, str],
     alias_exclude_patterns: list[str],
@@ -385,7 +397,7 @@ def full_libcst_analysis(
     for file_path_str in pre_scan_results:
         try:
             wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-            alias_visitor = _AliasVisitor(wrapper, root_pkg, alias_exclude_patterns)
+            alias_visitor = _AliasVisitor(wrapper, context_packages, alias_exclude_patterns)
             wrapper.visit(alias_visitor)
             alias_map.update(alias_visitor.alias_map)
         except Exception as e:
@@ -399,7 +411,7 @@ def full_libcst_analysis(
             wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
             call_visitor = _CallGraphVisitor(
                 wrapper,
-                root_pkg,
+                context_packages,
                 all_components,
                 module_path,
                 alias_map,
