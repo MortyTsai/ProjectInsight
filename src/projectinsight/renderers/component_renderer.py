@@ -19,21 +19,35 @@ import graphviz
 from projectinsight.utils.color_utils import get_analogous_dark_color
 
 
-def _get_node_color(node_name: str, root_package: str, layer_info: dict[str, dict[str, str]]) -> str:
+def _get_node_color(node_name: str, root_package: str | None, layer_info: dict[str, dict[str, str]]) -> str:
     """
-    根據節點 FQN 所屬的架構層級（包括根層級）獲取顏色。
+    根據節點 FQN 所屬的架構層級獲取顏色。
+    此版本能同時處理帶 root_package 和不帶 root_package 的情況。
     """
+    best_match_len = 0
+    color = "#E6F7FF"
+
     for layer_key, info in layer_info.items():
         if layer_key == "(root)":
             continue
-        prefix = f"{root_package}.{layer_key}."
-        if node_name.startswith(prefix):
-            return info.get("color", "#E6F7FF")
 
-    if "(root)" in layer_info:
-        return layer_info["(root)"].get("color", "#E6F7FF")
+        prefix = f"{root_package}.{layer_key}." if root_package else f"{layer_key}."
+        match_target = layer_key if not root_package else f"{root_package}.{layer_key}"
 
-    return "#E6F7FF"
+        if node_name.startswith(prefix) and len(prefix) > best_match_len:
+            best_match_len = len(prefix)
+            color = info.get("color", color)
+        elif node_name.startswith(match_target) and len(match_target) > best_match_len:
+            best_match_len = len(match_target)
+            color = info.get("color", color)
+
+    if best_match_len == 0 and "(root)" in layer_info:
+        if not root_package:
+            return layer_info["(root)"].get("color", color)
+        if node_name.startswith(f"{root_package}.") and node_name.count(".") == 1:
+            return layer_info["(root)"].get("color", color)
+
+    return color
 
 
 def _create_html_label(
@@ -96,7 +110,8 @@ def _create_html_label(
 
 def generate_component_dot_source(
     graph_data: dict[str, Any],
-    root_package: str,
+    project_name: str,
+    root_package: str | None,
     layer_info: dict[str, dict[str, str]],
     comp_graph_config: dict[str, Any],
 ) -> str:
@@ -118,7 +133,7 @@ def generate_component_dot_source(
 
     font_face = 'FACE="Microsoft YaHei"'
     title = (
-        f'<<FONT {font_face} POINT-SIZE="20">{root_package} 高階組件互動圖 引擎: {layout_engine}</FONT><BR/>'
+        f'<<FONT {font_face} POINT-SIZE="20">{project_name} 高階組件互動圖 引擎: {layout_engine}</FONT><BR/>'
         f'<FONT {font_face} POINT-SIZE="12">箭頭 A -&gt; B 表示 A 使用 B</FONT>>'
     )
 
@@ -187,8 +202,12 @@ def generate_component_dot_source(
                 node_attrs["pencolor"] = get_analogous_dark_color(color)
                 node_attrs["penwidth"] = "3.0"
                 node_attrs["style"] = "rounded,filled,bold"
-            label = node_fqn[len(f"{root_package}.") :] if node_fqn.startswith(f"{root_package}.") else node_fqn
+            label = node_fqn
             dot.node(node_fqn, label=label, shape="box", **node_attrs)
+
+    existing_edges = set(edges)
+    for u, v, _ in semantic_edges:
+        existing_edges.add((u, v))
 
     if semantic_config.get("enabled", True):
         link_styles = semantic_config.get("links", {})
@@ -238,7 +257,12 @@ def generate_component_dot_source(
                 ),
                 None,
             )
-            if source_node and target_node:
+            if (
+                source_node
+                and target_node
+                and (source_node, target_node) not in existing_edges
+                and (target_node, source_node) not in existing_edges
+            ):
                 dot.edge(source_node, target_node, style="invis")
 
     return dot.source
@@ -247,7 +271,8 @@ def generate_component_dot_source(
 def render_component_graph(
     graph_data: dict[str, Any],
     output_path: Path,
-    root_package: str,
+    project_name: str,
+    root_package: str | None,
     layer_info: dict[str, dict[str, str]],
     comp_graph_config: dict[str, Any],
 ):
@@ -256,7 +281,7 @@ def render_component_graph(
     """
     layout_engine = comp_graph_config.get("layout_engine", "dot")
     dpi = comp_graph_config.get("dpi", "200")
-    dot_source = generate_component_dot_source(graph_data, root_package, layer_info, comp_graph_config)
+    dot_source = generate_component_dot_source(graph_data, project_name, root_package, layer_info, comp_graph_config)
 
     logging.info(f"準備將組件互動圖渲染至: {output_path} (DPI: {dpi})")
     command = [layout_engine, f"-T{output_path.suffix[1:]}", f"-Gdpi={dpi}"]
