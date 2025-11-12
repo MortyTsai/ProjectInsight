@@ -1,6 +1,6 @@
 # configs/templates/project.template.yaml
 # ======================================================================
-# ProjectInsight - 專案分析設定範本
+# ProjectInsight - 專案分析設定範本 (V2.1)
 # ======================================================================
 # 說明:
 # 1. 這是 ProjectInsight 的一份完整功能設定檔範本，也是一份內嵌式的使用手冊。
@@ -47,19 +47,27 @@ output_dir: "../../output/my_awesome_project"
 # ----------------------------------------------------------------------
 
 analysis_types:
+  # [核心] 高階組件互動圖。分析類別與公開函式之間的呼叫與語義關係。
   - "component_interaction"
+  # [實驗性] 概念流動圖。自動發現並追蹤專案中關鍵物件實例的流動。
   - "auto_concept_flow"
+  # [實驗性] 動態行為圖。根據您定義的規則，識別基於字串或事件的動態行為模式。
   - "dynamic_behavior"
 
+# [可選] `auto_concept_flow` 的詳細設定
 auto_concept_flow:
+  # 排除符合特定模式的變數，避免將日誌記錄器或版本號等無關變數視為核心概念。
   exclude_patterns:
     - "*_LOGGER"
     - "*_VERSION"
 
+# [可選] `dynamic_behavior` 的詳細設定
 dynamic_behavior_analysis:
+  # 定義圖中不同角色的名稱與顏色。
   roles:
     producer: { name: "生產者 (Producer)", color: "#FFDDC1" }
     consumer: { name: "消費者 (Consumer)", color: "#C1E1FF" }
+  # 定義用於識別動態行為的規則列表。
   rules: []
 
 
@@ -67,6 +75,7 @@ dynamic_behavior_analysis:
 # Part 3: 報告內容設定 (Report Settings)
 # ======================================================================
 report_settings:
+  # 檔案結構樹的過濾規則
   tree_view:
     exclude_dirs:
       - "__pycache__"
@@ -90,6 +99,7 @@ report_settings:
       - "LICENSE"
       - "README.md"
       - ".*"
+  # 報告中包含的原始碼檔案類型
   source_code:
     included_extensions:
       - ".py"
@@ -102,8 +112,8 @@ report_settings:
 # ======================================================================
 visualization:
   component_interaction_graph:
-    layout_engine: "dot"
-    dpi: 200
+    layout_engine: "dot" # 可選 'dot', 'neato', 'sfdp' 等 Graphviz 引擎
+    dpi: 200 # 輸出圖片的解析度
 
     # [專家模式] 大型專案分析策略
     # ------------------------------------------------------------------
@@ -132,19 +142,31 @@ visualization:
       # 預設值: 2
       initial_depth: 2
 
+    # [專家模式] 節點過濾
+    # ------------------------------------------------------------------
     filtering:
+      # 排除 FQN 符合萬用字元模式的節點。
       exclude_nodes:
         - "*tests*"
         - "*migrations*"
 
+    # [專家模式] 佈局微調
+    # ------------------------------------------------------------------
     layout:
+      # 是否顯示指向同一組件內部其他方法的呼叫。
       show_internal_calls: true
+      # 圖的長寬比。'auto' 會自動調整，'none' 則不進行調整。
       aspect_ratio: "auto"
+      # [已棄用] 手動定義節點的渲染層級。此功能已被更智慧的拓撲排序取代。
       # ranking_groups:
       #   - ["my_package.main", "my_package.web.*"]
       #   - ["my_package.services.*"]
       #   - ["my_package.utils.*"]
+
+    # [專家模式] 節點樣式
+    # ------------------------------------------------------------------
     node_styles:
+      # 是否在節點中顯示函式/類別的 Docstring。
       show_docstrings: true
       title:
         font_size: 11
@@ -154,6 +176,37 @@ visualization:
         font_size: 9
         color: "#333333"
         spacing: 8
+
+    # [專家模式] 語義連結視覺化設定
+    # ------------------------------------------------------------------
+    semantic_analysis:
+      enabled: true
+      links:
+        registers:
+          style: "dashed"
+          color: "#1E90FF"
+          label: "registers"
+        inherits_from:
+          style: "dotted"
+          color: "#32CD32"
+          label: "inherits"
+        decorates:
+          style: "dashed"
+          color: "#FF8C00"
+          label: "decorates"
+        proxies:
+          style: "dashed"
+          color: "#9932CC"
+          label: "proxies"
+          arrowhead: "tee"
+        uses_strategy:
+          style: "bold"
+          color: "#FF69B4"
+          label: "uses_strategy"
+        depends_on:
+          style: "dashed"
+          color: "#DAA520" # GoldenRod color
+          label: "depends_on"
 
   dynamic_behavior_graph:
     layout_engine: "dot"
@@ -172,6 +225,9 @@ visualization:
 # ======================================================================
 # Part 5: 架構層級定義 (可選, 系統會自動發現)
 # ======================================================================
+# 手動為專案的子套件/模組定義名稱和顏色，以覆蓋自動分配的顏色。
+# `(root)` 是一個特殊關鍵字，用於定義根套件本身的樣式。
+# ----------------------------------------------------------------------
 # architecture_layers:
 #   core:
 #     color: "#FF0000"
