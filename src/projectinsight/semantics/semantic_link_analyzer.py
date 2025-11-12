@@ -572,6 +572,119 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
             logging.debug(f"處理 'strategy append' 時出錯: {e}", exc_info=True)
 
 
+class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
+    """
+    一個 LibCST 訪問者，用於發現 FastAPI 的 `Depends()` 依賴注入模式。
+    """
+
+    METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
+    HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
+    def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
+        super().__init__()
+        self.wrapper = wrapper
+        self.context_packages = context_packages
+        self.all_components = all_components
+        self.semantic_edges: set[tuple[str, str, str]] = set()
+
+    def _is_internal_fqn(self, fqn: str) -> bool:
+        """檢查 FQN 是否屬於專案的內部上下文。"""
+        return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages) or "docs_src" in fqn
+
+    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+        if not fqn:
+            return None
+        path = fqn.split(".<locals>.", 1)[0]
+        if path in self.all_components:
+            return path
+        parts = path.split(".")
+        for i in range(len(parts) - 1, 0, -1):
+            potential_component = ".".join(parts[:i])
+            if potential_component in self.all_components:
+                return potential_component
+        if "docs_src" in fqn:
+            return fqn
+        return None
+
+    def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
+        try:
+            fqns = self.get_metadata(FullyQualifiedNameProvider, node)
+            if fqns:
+                return next(iter(fqns)).name
+        except Exception as e:
+            logging.debug(f"無法獲取節點 FQN: {e}")
+        return None
+
+    def _find_dependency_in_node(self, node: cst.CSTNode) -> cst.Call | None:
+        """遞迴地在節點（特別是 Annotation）中尋找 Depends() 呼叫。"""
+        if self.matches(node, m.Call(func=m.Name("Depends"))):
+            return cast(cst.Call, node)
+
+        if m.matches(node, m.Subscript()):
+            subscript_node = cast(cst.Subscript, node)
+            for element in subscript_node.slice:
+                dependency = self._find_dependency_in_node(element.slice)
+                if dependency:
+                    return dependency
+        return None
+
+    def _process_dependency(self, depends_call: cst.Call, endpoint_component: str):
+        """處理一個已找到的 Depends() 呼叫節點。"""
+        if not depends_call.args:
+            return
+
+        dependency_provider_node = depends_call.args[0].value
+        provider_fqn = self._get_fqn_from_node(dependency_provider_node)
+
+        if not provider_fqn or not self._is_internal_fqn(provider_fqn):
+            return
+
+        provider_component = self._resolve_to_public_component(provider_fqn)
+        if provider_component and endpoint_component != provider_component:
+            edge = (endpoint_component, provider_component, "depends_on")
+            if edge not in self.semantic_edges:
+                self.semantic_edges.add(edge)
+                logging.debug(f"  [語義連結] 發現: {endpoint_component} --depends_on--> {provider_component}")
+
+    @m.visit(m.FunctionDef())
+    def _check_dependency_injection(self, node: cst.FunctionDef):
+        """訪問所有函式定義，檢查其參數是否有 Depends()。"""
+        try:
+            is_endpoint = False
+            if not node.decorators:
+                return
+
+            for decorator in node.decorators:
+                decorator_node = decorator.decorator
+                if m.matches(decorator_node, m.Call(func=m.Attribute())):
+                    call_node = cast(cst.Call, decorator_node)
+                    attr_node = cast(cst.Attribute, call_node.func)
+                    if attr_node.attr.value in self.HTTP_METHODS:
+                        is_endpoint = True
+                        break
+            if not is_endpoint:
+                return
+
+            endpoint_fqn = self._get_fqn_from_node(node.name)
+            endpoint_component = self._resolve_to_public_component(endpoint_fqn)
+            if not endpoint_component:
+                return
+
+            for param in node.params.params:
+                if param.default:
+                    dependency = self._find_dependency_in_node(param.default)
+                    if dependency:
+                        self._process_dependency(dependency, endpoint_component)
+
+                if param.annotation:
+                    dependency = self._find_dependency_in_node(param.annotation.annotation)
+                    if dependency:
+                        self._process_dependency(dependency, endpoint_component)
+
+        except Exception as e:
+            logging.debug(f"處理 'depends_on' 語義連結時出錯: {e}", exc_info=True)
+
+
 def analyze_semantic_links(
     repo_manager: FullRepoManager,
     pre_scan_results: dict[str, Any],
@@ -580,15 +693,6 @@ def analyze_semantic_links(
 ) -> dict[str, Any]:
     """
     執行所有靜態語義連結分析。
-
-    Args:
-        repo_manager: 已初始化的 LibCST FullRepoManager。
-        pre_scan_results: 來自 quick_ast_scan 的結果，用於迭代檔案。
-        context_packages: 包含所有頂層套件/模組的列表。
-        all_components: 來自 component_parser 的所有高階組件 FQN 集合。
-
-    Returns:
-        一個包含 'semantic_edges' 集合的字典。
     """
     all_semantic_edges: set[tuple[str, str, str]] = set()
 
@@ -602,6 +706,7 @@ def analyze_semantic_links(
                 _DecoratorVisitor(wrapper, context_packages, all_components),
                 _ProxyVisitor(wrapper, context_packages, all_components),
                 _StrategyRegistrationVisitor(wrapper, context_packages, all_components),
+                _DependencyInjectionVisitor(wrapper, context_packages, all_components),
             ]
 
             for visitor in visitors:
