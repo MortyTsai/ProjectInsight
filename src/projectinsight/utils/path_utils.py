@@ -42,13 +42,14 @@ def find_project_root(marker: str = "pyproject.toml") -> Path:
 
 def find_top_level_packages(source_root: Path) -> list[str]:
     """
-    掃描給定的原始碼根目錄，自動偵測所有頂層的 Python 套件和模組。
+    掃描給定的原始碼根目錄，自動偵測所有頂層的 Python 套件或包含 Python 程式碼的目錄。
+    [修正 v2] 此函式現在能處理像 `docs_src` 這樣本身不是套件但包含子套件的目錄。
 
     Args:
         source_root: 要掃描的 Python 原始碼根目錄。
 
     Returns:
-        一個包含所有頂層套件和模組名稱的字串列表。
+        一個包含所有頂層上下文根名稱的字串列表。
     """
     if not source_root.is_dir():
         logging.warning(f"提供的原始碼路徑不是一個有效目錄: {source_root}")
@@ -57,10 +58,8 @@ def find_top_level_packages(source_root: Path) -> list[str]:
     top_level_items = []
     try:
         for item in source_root.iterdir():
-            if item.is_dir() and (item / "__init__.py").exists():
+            if item.is_dir() and next(item.rglob("*.py"), None):
                 top_level_items.append(item.name)
-            elif item.is_file() and item.suffix == ".py" and item.stem != "__init__":
-                top_level_items.append(item.stem)
     except OSError as e:
         logging.error(f"掃描頂層套件時發生檔案系統錯誤: {e}")
         return []
