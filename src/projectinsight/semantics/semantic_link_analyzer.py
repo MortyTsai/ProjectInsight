@@ -8,7 +8,7 @@
 
 # 1. 標準庫導入
 import logging
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 # 2. 第三方庫導入
 import libcst as cst
@@ -578,7 +578,7 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
-    HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+    HTTP_METHODS: ClassVar[set[str]] = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 
     def __init__(self, wrapper: MetadataWrapper, context_packages: list[str], all_components: set[str]):
         super().__init__()
