@@ -7,6 +7,7 @@
 import datetime
 import fnmatch
 import logging
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,56 @@ def _collect_source_files(target_project_root: Path, report_settings: dict[str, 
     return collected
 
 
+def _write_debug_log(output_path: Path, project_name: str, filtered_components: list[str]):
+    """將除錯資訊寫入一個單獨的日誌檔案。"""
+    debug_log_path = output_path.with_name(f"{project_name}_InsightDebug.log")
+    log_parts = [
+        f"# ProjectInsight 除錯日誌: {project_name}",
+        f"生成時間: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "\n" + "=" * 50,
+        "附錄 A: 潛在的分析盲點或獨立組件",
+        "=" * 50,
+        "說明: 以下列表包含所有在「高階組件互動圖」中被過濾掉的、",
+        "尺寸過小的連通分量中的節點 (通常是孤立節點)。",
+        "如果在此列表中發現了您認為是核心的組件，這可能表示靜態分析存在盲點，",
+        "導致該組件未能被正確連接到主架構圖中。",
+        "\n",
+    ]
+    log_parts.extend(f"- {fqn}" for fqn in filtered_components)
+
+    try:
+        debug_log_path.write_text("\n".join(log_parts), encoding="utf-8")
+        logging.info(f"除錯日誌已成功儲存至: {debug_log_path}")
+    except Exception as e:
+        logging.error(f"寫入除錯日誌時發生錯誤: {e}")
+
+
+def _generate_adjacency_list_text(graph_data: dict[str, Any]) -> list[str]:
+    """[極簡版] 將圖形資料轉換為最高效的鄰接串列 Markdown 格式。"""
+    edges = graph_data.get("edges", [])
+    semantic_edges = graph_data.get("semantic_edges", [])
+
+    adjacency_list = defaultdict(list)
+
+    for u, v, label in semantic_edges:
+        adjacency_list[u].append(f"- {label.upper()}: {v}")
+
+    for caller, callee in edges:
+        adjacency_list[caller].append(f"- CALLS: {callee}")
+
+    if not adjacency_list:
+        return []
+
+    text_parts = ["<details>\n<summary>點擊展開/摺疊鄰接串列</summary>\n"]
+    text_parts.append("```markdown")
+    for node in sorted(adjacency_list.keys()):
+        text_parts.append(f"- **{node}**:")
+        for edge_str in sorted(adjacency_list[node]):
+            text_parts.append(f"  {edge_str}")
+    text_parts.append("```\n</details>\n")
+    return text_parts
+
+
 def generate_markdown_report(
     project_name: str,
     target_project_root: Path,
@@ -50,14 +101,7 @@ def generate_markdown_report(
     report_settings: dict[str, Any],
 ):
     """
-    生成一份完整的 Markdown 分析報告。
-
-    Args:
-        project_name: 專案名稱 (用於報告標題)。
-        target_project_root: 被分析專案的根目錄。
-        output_path: Markdown 報告的儲存路徑。
-        analysis_results: 一個包含所有分析結果的字典。
-        report_settings: 包含報告生成規則的字典。
+    生成一份為 LLM 優化的 Markdown 分析報告，並將除錯資訊寫入單獨的日誌檔案。
     """
     report_parts = []
     analysis_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -73,13 +117,10 @@ def generate_markdown_report(
     report_parts.extend(tree_lines)
     report_parts.append("```\n</details>\n")
 
-    component_dot = analysis_results.get("component_dot_source")
-    if component_dot:
-        report_parts.append("## 2. 高階組件互動圖")
-        report_parts.append("<details>\n<summary>點擊展開/摺疊 DOT 原始碼</summary>\n")
-        report_parts.append("```dot")
-        report_parts.append(component_dot)
-        report_parts.append("```\n</details>\n")
+    component_graph_data = analysis_results.get("component_graph_data")
+    if component_graph_data:
+        report_parts.append("## 2. 高階組件關係圖 (鄰接串列)")
+        report_parts.extend(_generate_adjacency_list_text(component_graph_data))
 
     concept_dot = analysis_results.get("concept_flow_dot_source")
     if concept_dot:
@@ -117,3 +158,7 @@ def generate_markdown_report(
         logging.info(f"Markdown 報告已成功儲存至: {output_path}")
     except Exception as e:
         logging.error(f"寫入 Markdown 報告時發生錯誤: {e}")
+
+    filtered_components = analysis_results.get("filtered_components")
+    if filtered_components:
+        _write_debug_log(output_path, project_name, filtered_components)
