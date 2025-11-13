@@ -6,6 +6,7 @@
 # 1. 標準庫導入
 import colorsys
 import logging
+import random
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
         "layout": {
             "show_internal_calls": False,
             "aspect_ratio": "auto",
+            "min_component_size_to_render": 2,
         },
         "node_styles": {
             "show_docstrings": True,
@@ -76,6 +78,11 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
                     "style": "bold",
                     "color": "#FF69B4",
                     "label": "uses_strategy",
+                },
+                "depends_on": {
+                    "style": "dashed",
+                    "color": "#DAA520",
+                    "label": "depends_on",
                 },
             },
         },
@@ -131,16 +138,27 @@ class ConfigLoader:
         potential_src_dir = target_project_root / "src"
         python_source_root = potential_src_dir if potential_src_dir.is_dir() else target_project_root
 
+        scan_bases: list[tuple[Path, str | None]] = []
         root_package_name = self.config.get("root_package_name")
+
         if root_package_name:
-            layers_base_path = python_source_root / root_package_name
-            auto_discovered_layers = self._discover_sub_packages(layers_base_path)
+            scan_bases.append((python_source_root / root_package_name, root_package_name))
         else:
-            top_level_items = find_top_level_packages(python_source_root)
-            auto_discovered_layers = self._assign_colors_to_layers(top_level_items)
+            top_level_packages = find_top_level_packages(python_source_root)
+            for pkg in top_level_packages:
+                pkg_path = python_source_root / pkg
+                if pkg_path.is_dir():
+                    scan_bases.append((pkg_path, pkg))
+
+        all_discovered_layers = {}
+        for base_path, prefix in scan_bases:
+            all_discovered_layers.update(self._discover_sub_packages(base_path, prefix))
+
+        colored_layers = self._assign_colors_to_layers(list(all_discovered_layers.keys()))
+        all_discovered_layers.update(colored_layers)
 
         user_provided_layers = self.config.get("architecture_layers", {})
-        self.config["architecture_layers"] = {**auto_discovered_layers, **user_provided_layers}
+        self.config["architecture_layers"] = {**all_discovered_layers, **user_provided_layers}
 
         root_display_name = root_package_name or self.config_path.stem.replace("_test", "")
         if "(root)" not in self.config["architecture_layers"]:
@@ -161,14 +179,19 @@ class ConfigLoader:
 
     @staticmethod
     def _generate_color_palette(num_colors: int) -> list[str]:
-        """使用黃金比例演算法生成一個視覺上可區分的、和諧的調色盤。"""
+        """
+        [最終版] 使用黃金比例演算法，並引入隨機性，生成視覺對比強烈的調色盤。
+        """
         palette = []
         golden_ratio_conjugate = 0.61803398875
-        hue = 0.7
+        hue = random.random()  # 從隨機色相開始，避免每次都一樣
         for _ in range(num_colors):
             hue += golden_ratio_conjugate
             hue %= 1
-            rgb_float = colorsys.hls_to_rgb(hue, 0.9, 0.9)
+            # 在一個精心選擇的範圍內隨機化亮度和飽和度
+            lightness = random.uniform(0.75, 0.95)
+            saturation = random.uniform(0.7, 0.9)
+            rgb_float = colorsys.hls_to_rgb(hue, lightness, saturation)
             rgb_int = tuple(int(c * 255) for c in rgb_float)
             palette.append(f"#{rgb_int[0]:02x}{rgb_int[1]:02x}{rgb_int[2]:02x}")
         return palette
@@ -182,17 +205,21 @@ class ConfigLoader:
         logging.info(f"自動為 {len(auto_layers)} 個架構層級分配顏色: {', '.join(auto_layers.keys())}")
         return auto_layers
 
-    def _discover_sub_packages(self, layers_base_path: Path) -> dict[str, Any]:
-        """自動掃描給定目錄的子套件，並為其分配顏色。"""
-        if not layers_base_path.is_dir():
-            return {}
+    def _discover_sub_packages(self, base_path: Path, prefix: str | None = None) -> dict[str, Any]:
+        """遞迴地掃描給定目錄的所有子套件，並以點分隔的路徑作為鍵。"""
+        layers = {}
+        if not base_path.is_dir():
+            return layers
+
+        if prefix:
+            layers[prefix] = {}
+
         try:
-            sub_packages = [
-                item.name
-                for item in sorted(layers_base_path.iterdir())
-                if item.is_dir() and (item / "__init__.py").exists()
-            ]
-            return self._assign_colors_to_layers(sub_packages)
+            for item in sorted(base_path.iterdir()):
+                if item.is_dir() and (item / "__init__.py").exists():
+                    layer_key = f"{prefix}.{item.name}" if prefix else item.name
+                    layers.update(self._discover_sub_packages(item, layer_key))
+            return layers
         except OSError as e:
             logging.warning(f"自動發現架構層級時發生錯誤: {e}")
             return {}
