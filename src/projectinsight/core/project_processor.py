@@ -12,6 +12,7 @@ ProjectInsight 的核心處理引擎。
     中的各個子系統，完成從原始碼到最終報告的完整轉換流程。
 6.  實現了對不同專案結構（如 `src` 佈局和扁平佈局）的健壯適應性。
 """
+
 # 1. 標準庫導入
 import logging
 import os
@@ -35,7 +36,7 @@ from projectinsight.builders.dynamic_behavior_builder import build_dynamic_behav
 from projectinsight.core.config_loader import ConfigLoader
 from projectinsight.core.interactive_wizard import InteractiveWizard
 from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
-from projectinsight.renderers.component_renderer import generate_component_dot_source, render_component_graph
+from projectinsight.renderers.component_renderer import render_component_graph
 from projectinsight.renderers.concept_flow_renderer import (
     generate_concept_flow_dot_source,
     render_concept_flow_graph,
@@ -272,13 +273,14 @@ class ProjectProcessor:
                 focus_config=comp_graph_config.get("focus"),
                 semantic_edges=semantic_edges,
             )
-            dot_source = generate_component_dot_source(
-                graph_data, self.project_name, root_package_name, architecture_layers, comp_graph_config
-            )
-            report_analysis_results["component_dot_source"] = dot_source
+
+            # [最終架構] 將完整的 graph_data 傳遞給 reporter
+            report_analysis_results["component_graph_data"] = graph_data
+
+            # 渲染 PNG 僅作為人類除錯的視覺化工具
             layout_engine = comp_graph_config.get("layout_engine", "dot")
             png_output_path = output_dir / f"{self.project_name}_component_interaction_{layout_engine}.png"
-            render_component_graph(
+            filtered_components = render_component_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
                 project_name=self.project_name,
@@ -286,6 +288,7 @@ class ProjectProcessor:
                 layer_info=architecture_layers,
                 comp_graph_config=comp_graph_config,
             )
+            report_analysis_results["filtered_components"] = filtered_components
 
         elif analysis_type == "auto_concept_flow":
             display_package_name = self.config.get("root_package_name", context_packages[0])
