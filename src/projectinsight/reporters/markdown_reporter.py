@@ -68,7 +68,7 @@ def _write_debug_log(output_path: Path, project_name: str, filtered_components: 
 
 
 def _generate_adjacency_list_text(graph_data: dict[str, Any]) -> list[str]:
-    """[極簡版] 將圖形資料轉換為最高效的鄰接串列 Markdown 格式。"""
+    """將圖形資料轉換為最高效的鄰接串列 Markdown 格式。"""
     edges = graph_data.get("edges", [])
     semantic_edges = graph_data.get("semantic_edges", [])
 
