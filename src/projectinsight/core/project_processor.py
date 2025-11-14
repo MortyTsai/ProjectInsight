@@ -241,7 +241,6 @@ class ProjectProcessor:
     ):
         """執行單一類型的分析。"""
         logging.info(f"--- 開始執行分析: '{analysis_type}' ---")
-        root_package_name = self.config.get("root_package_name")
         vis_config = self.config.get("visualization", {})
         architecture_layers = self.config.get("architecture_layers", {})
 
@@ -274,17 +273,14 @@ class ProjectProcessor:
                 semantic_edges=semantic_edges,
             )
 
-            # [最終架構] 將完整的 graph_data 傳遞給 reporter
             report_analysis_results["component_graph_data"] = graph_data
 
-            # 渲染 PNG 僅作為人類除錯的視覺化工具
             layout_engine = comp_graph_config.get("layout_engine", "dot")
             png_output_path = output_dir / f"{self.project_name}_component_interaction_{layout_engine}.png"
             filtered_components = render_component_graph(
                 graph_data=graph_data,
                 output_path=png_output_path,
                 project_name=self.project_name,
-                root_package=root_package_name,
                 layer_info=architecture_layers,
                 comp_graph_config=comp_graph_config,
             )
