@@ -34,6 +34,7 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
             "show_internal_calls": False,
             "aspect_ratio": "auto",
             "min_component_size_to_render": 2,
+            "stagger_groups": 3,
         },
         "node_styles": {
             "show_docstrings": True,
@@ -180,15 +181,14 @@ class ConfigLoader:
     @staticmethod
     def _generate_color_palette(num_colors: int) -> list[str]:
         """
-        [最終版] 使用黃金比例演算法，並引入隨機性，生成視覺對比強烈的調色盤。
+        使用黃金比例演算法，並引入隨機性，生成視覺對比強烈的調色盤。
         """
         palette = []
         golden_ratio_conjugate = 0.61803398875
-        hue = random.random()  # 從隨機色相開始，避免每次都一樣
+        hue = random.random()
         for _ in range(num_colors):
             hue += golden_ratio_conjugate
             hue %= 1
-            # 在一個精心選擇的範圍內隨機化亮度和飽和度
             lightness = random.uniform(0.75, 0.95)
             saturation = random.uniform(0.7, 0.9)
             rgb_float = colorsys.hls_to_rgb(hue, lightness, saturation)
