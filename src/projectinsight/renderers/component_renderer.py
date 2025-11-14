@@ -9,7 +9,7 @@ import logging
 import re
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # 2. 第三方庫導入
 import graphviz
@@ -19,35 +19,33 @@ import networkx as nx
 from projectinsight.utils.color_utils import get_analogous_dark_color
 
 
-def _get_node_color(node_name: str, root_package: str | None, layer_info: dict[str, dict[str, str]]) -> str:
+def _get_node_layer_info(node_name: str, layer_info: dict[str, dict[str, str]]) -> tuple[str, str | None]:
     """
-    根據節點 FQN 所屬的架構層級獲取顏色。
-    此版本能同時處理帶 root_package 和不帶 root_package 的情況。
+    根據節點 FQN，從 layer_info 中找到最精確匹配的架構層級鍵和顏色。
+    [V2 - 已修正] 此版本直接使用 layer_key 作為 FQN 前綴進行匹配，解決了雙重前綴問題。
     """
     best_match_len = 0
-    color = "#E6F7FF"
+    default_color = "#E6F7FF"
+    layer_key = "(root)"
 
-    for layer_key, info in layer_info.items():
-        if layer_key == "(root)":
+    root_info = layer_info.get("(root)", {})
+    default_color = root_info.get("color", default_color)
+
+    for key, info in layer_info.items():
+        if key == "(root)":
             continue
 
-        prefix = f"{root_package}.{layer_key}." if root_package else f"{layer_key}."
-        match_target = layer_key if not root_package else f"{root_package}.{layer_key}"
-
+        prefix = f"{key}."
         if node_name.startswith(prefix) and len(prefix) > best_match_len:
             best_match_len = len(prefix)
-            color = info.get("color", color)
-        elif node_name.startswith(match_target) and len(match_target) > best_match_len:
-            best_match_len = len(match_target)
-            color = info.get("color", color)
+            default_color = info.get("color", default_color)
+            layer_key = key
+        elif node_name == key and len(key) > best_match_len:
+            best_match_len = len(key)
+            default_color = info.get("color", default_color)
+            layer_key = key
 
-    if best_match_len == 0 and "(root)" in layer_info:
-        if not root_package:
-            return layer_info["(root)"].get("color", color)
-        if node_name.startswith(f"{root_package}.") and node_name.count(".") == 1:
-            return layer_info["(root)"].get("color", color)
-
-    return color
+    return layer_key, default_color
 
 
 def _create_html_label(
@@ -117,7 +115,6 @@ def render_component_graph(
     graph_data: dict[str, Any],
     output_path: Path,
     project_name: str,
-    root_package: str | None,
     layer_info: dict[str, dict[str, str]],
     comp_graph_config: dict[str, Any],
 ) -> list[str]:
@@ -129,8 +126,10 @@ def render_component_graph(
     focus_config = comp_graph_config.get("focus", {})
     entrypoints = set(focus_config.get("entrypoints", []))
     semantic_config = comp_graph_config.get("semantic_analysis", {})
+    layout_config = comp_graph_config.get("layout", {})
     layout_engine = comp_graph_config.get("layout_engine", "dot")
-    min_component_size = comp_graph_config.get("layout", {}).get("min_component_size_to_render", 2)
+    min_component_size = layout_config.get("min_component_size_to_render", 2)
+    stagger_groups = layout_config.get("stagger_groups", 3)
     dpi = comp_graph_config.get("dpi", "200")
 
     dot = graphviz.Digraph("ComponentInteractionGraph")
@@ -145,32 +144,14 @@ def render_component_graph(
         label=title,
         charset="UTF-8",
         compound="true",
-        nodesep="0.8",
+        nodesep="1.2",
         ranksep="1.2",
         splines="ortho",
-        concentrate="true",
         packmode="graph",
         pack="true",
     )
     dot.attr("node", style="filled", fontname="Arial", fontsize="11")
     dot.attr("edge", color="gray50", arrowsize="0.7")
-
-    if layer_info:
-        with dot.subgraph(name="cluster_legend") as legend:
-            legend.attr(label="架構層級圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
-            font_tag_start = f'<FONT {font_face} POINT-SIZE="10">'
-            font_tag_end = "</FONT>"
-            legend_data = {
-                info.get("name", key): info.get("color") for key, info in layer_info.items() if info.get("color")
-            }
-            legend_items = [f"<TR><TD>{font_tag_start}圖例{font_tag_end}</TD></TR>"]
-            for name, color in sorted(legend_data.items()):
-                legend_items.append(f'<TR><TD BGCOLOR="{color}">{font_tag_start}{name}{font_tag_end}</TD></TR>')
-            legend.node(
-                "legend_table",
-                label=f"<<TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>{''.join(legend_items)}</TABLE>>",
-                shape="plaintext",
-            )
 
     nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
@@ -180,6 +161,72 @@ def render_component_graph(
     if not nodes:
         dot.node("empty_graph", "圖中無任何節點", shape="plaintext")
         return []
+
+    with dot.subgraph(name="cluster_legends") as legends:
+        legends.attr(label="", color="none")
+
+        active_nodes_in_graph = set(nodes)
+        active_layer_keys = {_get_node_layer_info(node, layer_info)[0] for node in active_nodes_in_graph}
+
+        if layer_info and active_layer_keys:
+            with legends.subgraph(name="cluster_layer_legend") as layer_legend:
+                layer_legend.attr(label="架構層級圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
+                font_tag_start = f'<FONT {font_face} POINT-SIZE="10">'
+                font_tag_end = "</FONT>"
+                legend_items = [f"<TR><TD>{font_tag_start}圖例{font_tag_end}</TD></TR>"]
+                for key in sorted(active_layer_keys):
+                    info = layer_info.get(key, {})
+                    name = info.get("name", key)
+                    color = info.get("color")
+                    if name and color:
+                        legend_items.append(f'<TR><TD BGCOLOR="{color}">{font_tag_start}{name}{font_tag_end}</TD></TR>')
+                layer_legend.node(
+                    "layer_legend_table",
+                    label=f"<<TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>{''.join(legend_items)}</TABLE>>",
+                    shape="plaintext",
+                )
+
+        active_semantic_labels = {label for _, _, label in semantic_edges}
+        if semantic_config.get("enabled", True) and active_semantic_labels:
+            with legends.subgraph(name="cluster_semantic_legend") as semantic_legend:
+                semantic_legend.attr(label="語義連結圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
+
+                html_rows = []
+                link_styles = semantic_config.get("links", {})
+
+                style_map = {
+                    "dashed": "- - - &gt;",
+                    "dotted": "&middot; &middot; &middot; &gt;",
+                    "bold": "&mdash;&mdash;&mdash;&gt;",
+                }
+                arrow_map = {"tee": "&mdash;|"}
+
+                for key in sorted(active_semantic_labels):
+                    style = link_styles.get(key)
+                    if not style:
+                        continue
+
+                    label_text = style.get("label", key)
+                    color = style.get("color", "black")
+                    line_style = style.get("style", "solid")
+                    arrow = style.get("arrowhead")
+
+                    line_symbol = style_map.get(line_style, "&mdash;&mdash;&gt;")
+                    if arrow and arrow in arrow_map:
+                        line_symbol = line_symbol.replace("&gt;", arrow_map[arrow])
+
+                    html_rows.append(
+                        f'<TR><TD ALIGN="LEFT">{label_text}</TD>'
+                        f'<TD ALIGN="LEFT"><FONT COLOR="{color}">{line_symbol}</FONT></TD></TR>'
+                    )
+
+                if html_rows:
+                    legend_html = (
+                        '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="5" CELLPADDING="2">'
+                        + "".join(html_rows)
+                        + "</TABLE>>"
+                    )
+                    semantic_legend.node("semantic_legend_table", label=legend_html, shape="plaintext")
 
     graph = nx.DiGraph()
     graph.add_nodes_from(nodes)
@@ -195,19 +242,42 @@ def render_component_graph(
         else:
             filtered_out_components.extend(list(c))
 
+    components_to_render.sort(key=len, reverse=True)
+
     num_filtered = len(filtered_out_components)
     logging.info(
         f"發現 {len(all_components)} 個連通分量，"
         f"已過濾掉 {num_filtered} 個來自微小分量（尺寸<{min_component_size}）的節點。"
     )
-    logging.info(f"將為剩餘的 {len(components_to_render)} 個分量進行渲染。")
+    logging.info(f"將為剩餘的 {len(components_to_render)} 個分量，按尺寸由大到小進行渲染。")
 
     for i, component_nodes in enumerate(components_to_render):
         with dot.subgraph(name=f"cluster_{i}") as c:
-            c.attr(label=f"Component {i + 1}", style="rounded", color="gray")
+            c.attr(label=f"Component #{i + 1} (size: {len(component_nodes)})", style="rounded", color="gray")
+            c.attr(rankdir="TB")
+
+            subgraph = graph.subgraph(component_nodes)
+            node_sequence: list[Any]
+            try:
+                di_subgraph = cast(nx.DiGraph, subgraph)
+                node_sequence = list(nx.topological_sort(di_subgraph))
+                logging.debug(f"Component {i + 1}: 成功進行拓撲排序。")
+            except nx.NetworkXUnfeasible:
+                logging.warning(f"Component {i + 1}: 檢測到環，降級為字母排序。")
+                node_sequence = sorted(component_nodes)
+
+            if stagger_groups > 0 and len(node_sequence) > 1:
+                groups = [node_sequence[j : j + stagger_groups] for j in range(0, len(node_sequence), stagger_groups)]
+                for group in groups:
+                    quoted_nodes = [f'"{node}"' for node in group]
+                    c.body.append(f"{{ rank=same; {' '.join(quoted_nodes)}; }}")
+
+                for j in range(len(groups) - 1):
+                    c.edge(groups[j][0], groups[j + 1][0], style="invis")
+
             for node_fqn in sorted(component_nodes):
                 docstring = docstrings.get(node_fqn) if show_docstrings else None
-                color = _get_node_color(node_fqn, root_package, layer_info)
+                _, color = _get_node_layer_info(node_fqn, layer_info)
                 is_entrypoint = node_fqn in entrypoints
                 node_attrs = {"fillcolor": color}
 
@@ -231,7 +301,7 @@ def render_component_graph(
                 v,
                 style=style_config.get("style", "dashed"),
                 color=style_config.get("color", "blue"),
-                xlabel=f" {style_config.get('label', label)} " if style_config.get("label") else label,
+                arrowhead=style_config.get("arrowhead", "normal"),
                 fontname="Microsoft YaHei",
                 fontsize="9",
             )
