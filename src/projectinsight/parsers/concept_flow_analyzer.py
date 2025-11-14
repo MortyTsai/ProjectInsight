@@ -120,7 +120,6 @@ def analyze_concept_flow(
         logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}")
         return {}
 
-    # [註] 概念流動圖的正規化，暫時使用 context_packages 的第一個元素
     display_pkg = context_packages[0] if context_packages else ""
     known_concepts: set[str] = {_normalize_fqn(g["from_object"], display_pkg) for g in track_groups}
 
