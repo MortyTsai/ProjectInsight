@@ -34,7 +34,7 @@ ProjectInsight 是一個為大型語言模型 (LLM) 設計的 Python 專案靜�
 
 2.  **複製本專案並安裝依賴**
     ```bash
-    git clone https://github.com/your-username/ProjectInsight.git
+    git clone https://github.com/MortyTsai/ProjectInsight.git
     cd ProjectInsight
     python -m venv .venv
     # Windows
