@@ -55,6 +55,7 @@ def _create_html_label(
     is_entrypoint: bool,
     bg_color: str,
     border_color: str,
+    node_style: str,
 ) -> str:
     """
     根據節點資訊和樣式設定，生成三段式 FQN 樣式的 HTML-like Label。
@@ -101,12 +102,14 @@ def _create_html_label(
 
     content = f"{title_html}{docstring_html}"
 
-    if is_entrypoint:
-        table_attrs = (
-            f'BORDER="3" COLOR="{border_color}" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="{bg_color}"'
-        )
-    else:
-        table_attrs = f'BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="{bg_color}"'
+    border_style = 'BORDER="3"' if is_entrypoint else 'BORDER="1"'
+    color_style = f'COLOR="{border_color}"'
+    style_attribute = 'STYLE="dashed"' if node_style != "high_level" else ""
+
+    table_attrs = (
+        f"{border_style} {color_style} {style_attribute} "
+        f'CELLBORDER="0" CELLSPACING="0" CELLPADDING="5" BGCOLOR="{bg_color}"'
+    )
 
     return f'<<TABLE {table_attrs}><TR><TD ALIGN="LEFT" VALIGN="TOP">{content}</TD></TR></TABLE>>'
 
@@ -117,6 +120,7 @@ def render_component_graph(
     project_name: str,
     layer_info: dict[str, dict[str, str]],
     comp_graph_config: dict[str, Any],
+    context_packages: list[str],
 ) -> list[str]:
     """
     使用 graphviz 將組件互動圖渲染成圖片檔案，並回傳被過濾掉的組件列表。
@@ -157,10 +161,22 @@ def render_component_graph(
     edges = graph_data.get("edges", [])
     docstrings = graph_data.get("docstrings", {})
     semantic_edges = graph_data.get("semantic_edges", [])
+    high_level_components = graph_data.get("high_level_components", set())
 
     if not nodes:
         dot.node("empty_graph", "圖中無任何節點", shape="plaintext")
         return []
+
+    has_internal_private_nodes = False
+    has_external_nodes = False
+    for node_fqn in nodes:
+        if node_fqn not in high_level_components:
+            if any(node_fqn.startswith(pkg) for pkg in context_packages):
+                has_internal_private_nodes = True
+            else:
+                has_external_nodes = True
+        if has_internal_private_nodes and has_external_nodes:
+            break
 
     with dot.subgraph(name="cluster_legends") as legends:
         legends.attr(label="", color="none")
@@ -170,19 +186,34 @@ def render_component_graph(
 
         if layer_info and active_layer_keys:
             with legends.subgraph(name="cluster_layer_legend") as layer_legend:
-                layer_legend.attr(label="架構層級圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
+                layer_legend.attr(label="節點樣式圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
                 font_tag_start = f'<FONT {font_face} POINT-SIZE="10">'
                 font_tag_end = "</FONT>"
-                legend_items = [f"<TR><TD>{font_tag_start}圖例{font_tag_end}</TD></TR>"]
+                legend_title = "<b>高階組件 (按層級著色)</b>"
+                legend_items = [f'<TR><TD ALIGN="LEFT">{font_tag_start}{legend_title}{font_tag_end}</TD></TR>']
                 for key in sorted(active_layer_keys):
                     info = layer_info.get(key, {})
                     name = info.get("name", key)
                     color = info.get("color")
                     if name and color:
-                        legend_items.append(f'<TR><TD BGCOLOR="{color}">{font_tag_start}{name}{font_tag_end}</TD></TR>')
+                        legend_items.append(
+                            f'<TR><TD BGCOLOR="{color}" ALIGN="LEFT">{font_tag_start}{name}{font_tag_end}</TD></TR>'
+                        )
+
+                if has_internal_private_nodes:
+                    legend_items.append(
+                        f'<TR><TD BGCOLOR="#E0E0E0" ALIGN="LEFT" BORDER="1" STYLE="dashed" COLOR="#AAAAAA">'
+                        f"{font_tag_start}內部私有組件{font_tag_end}</TD></TR>"
+                    )
+                if has_external_nodes:
+                    legend_items.append(
+                        f'<TR><TD BGCOLOR="#FFFFFF" ALIGN="LEFT" BORDER="1" STYLE="dashed" COLOR="#888888">'
+                        f"{font_tag_start}外部依賴/契約{font_tag_end}</TD></TR>"
+                    )
+
                 layer_legend.node(
                     "layer_legend_table",
-                    label=f"<<TABLE BORDER='0' CELLBORDER='1' CELLSPACING='0'>{''.join(legend_items)}</TABLE>>",
+                    label=f"<<TABLE BORDER='0' CELLBORDER='1' CELLSPACING='5'>{''.join(legend_items)}</TABLE>>",
                     shape="plaintext",
                 )
 
@@ -277,19 +308,39 @@ def render_component_graph(
 
             for node_fqn in sorted(component_nodes):
                 docstring = docstrings.get(node_fqn) if show_docstrings else None
-                _, color = _get_node_layer_info(node_fqn, layer_info)
                 is_entrypoint = node_fqn in entrypoints
+
+                is_external = not any(node_fqn.startswith(pkg) for pkg in context_packages)
+                is_high_level = node_fqn in high_level_components
+
+                node_style_type: str
+                if is_high_level:
+                    node_style_type = "high_level"
+                    _, color = _get_node_layer_info(node_fqn, layer_info)
+                    border_color = get_analogous_dark_color(color) if is_entrypoint else color
+                elif is_external:
+                    node_style_type = "external"
+                    color = "#FFFFFF"
+                    border_color = "#888888"
+                else:
+                    node_style_type = "internal_private"
+                    color = "#E0E0E0"
+                    border_color = "#AAAAAA"
+
                 node_attrs = {"fillcolor": color}
 
                 if show_docstrings:
-                    border_color = get_analogous_dark_color(color) if is_entrypoint else ""
-                    label = _create_html_label(node_fqn, docstring, node_styles, is_entrypoint, color, border_color)
+                    label = _create_html_label(
+                        node_fqn, docstring, node_styles, is_entrypoint, color, border_color, node_style_type
+                    )
                     c.node(node_fqn, label=label, shape="plaintext", **node_attrs)
                 else:
                     if is_entrypoint:
                         node_attrs["pencolor"] = get_analogous_dark_color(color)
                         node_attrs["penwidth"] = "3.0"
                         node_attrs["style"] = "rounded,filled,bold"
+                    if node_style_type != "high_level":
+                        node_attrs["style"] = "filled,dashed"
                     c.node(node_fqn, label=node_fqn, shape="box", **node_attrs)
 
     if semantic_config.get("enabled", True):
