@@ -191,4 +191,5 @@ def build_component_graph_data(
         "nodes_by_module": nodes_by_module,
         "docstrings": docstring_map,
         "semantic_edges": sorted(final_semantic_edges),
+        "high_level_components": all_components,
     }
