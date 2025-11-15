@@ -47,9 +47,17 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
         """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
-    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+    def _resolve_to_component(self, fqn: str | None) -> str | None:
+        """
+        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
+        但會過濾掉代表區域變數的 `<locals>` 雜訊。
+        """
         if not fqn:
             return None
+
+        if ".<locals>." in fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -58,7 +66,7 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
-        return None
+        return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
         try:
@@ -75,7 +83,7 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
             if isinstance(current, cst.ClassDef):
                 try:
                     fqn = self._get_fqn_from_node(current)
-                    return self._resolve_to_public_component(fqn)
+                    return self._resolve_to_component(fqn)
                 except Exception:
                     return None
             try:
@@ -105,7 +113,7 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
                 if not registree_fqn or not self._is_internal_fqn(registree_fqn):
                     continue
 
-                registree_component = self._resolve_to_public_component(registree_fqn)
+                registree_component = self._resolve_to_component(registree_fqn)
 
                 if registree_component and registrar_component != registree_component:
                     edge = (registrar_component, registree_component, "registers")
@@ -136,9 +144,17 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
         """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
-    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+    def _resolve_to_component(self, fqn: str | None) -> str | None:
+        """
+        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
+        但會過濾掉代表區域變數的 `<locals>` 雜訊。
+        """
         if not fqn:
             return None
+
+        if ".<locals>." in fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -147,7 +163,7 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
-        return None
+        return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
         try:
@@ -165,9 +181,9 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
         """
         try:
             child_fqn = self._get_fqn_from_node(node.name)
-            child_component = self._resolve_to_public_component(child_fqn)
+            child_component = self._resolve_to_component(child_fqn)
 
-            if not child_component or not child_fqn or not self._is_internal_fqn(child_fqn):
+            if not child_component:
                 return
 
             for base in node.bases:
@@ -175,7 +191,7 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
                 if not parent_fqn:
                     continue
 
-                parent_component = self._resolve_to_public_component(parent_fqn)
+                parent_component = self._resolve_to_component(parent_fqn)
                 if not parent_component:
                     continue
 
@@ -210,9 +226,17 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
         """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
-    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+    def _resolve_to_component(self, fqn: str | None) -> str | None:
+        """
+        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
+        但會過濾掉代表區域變數的 `<locals>` 雜訊。
+        """
         if not fqn:
             return None
+
+        if ".<locals>." in fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -221,7 +245,7 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
-        return None
+        return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
         try:
@@ -243,20 +267,16 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
                 return
 
             child_fqn = self._get_fqn_from_node(parent_def.name)
-            child_component = self._resolve_to_public_component(child_fqn)
+            child_component = self._resolve_to_component(child_fqn)
 
-            if (
-                not child_component
-                or not child_fqn
-                or not (self._is_internal_fqn(child_fqn) or child_fqn.startswith("builtins"))
-            ):
+            if not child_component:
                 return
 
             decorator_fqn = self._get_fqn_from_node(node.decorator)
             if not decorator_fqn:
                 return
 
-            if decorator_fqn.split(".")[-1] in ("route", "command", "errorhandler", "before_request"):
+            if decorator_fqn.split(".")[-1] in ("route", "command", "errorhandler", "before_request", "visit"):
                 if m.matches(node.decorator, m.Call(func=m.Attribute(value=m.DoNotCare()))):
                     decorator_call_node = cast(cst.Call, node.decorator)
                     decorator_attribute_node = cast(cst.Attribute, decorator_call_node.func)
@@ -265,7 +285,7 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
                     decorator_attribute_node = cast(cst.Attribute, node.decorator)
                     decorator_fqn = self._get_fqn_from_node(decorator_attribute_node.value)
 
-            parent_component = self._resolve_to_public_component(decorator_fqn)
+            parent_component = self._resolve_to_component(decorator_fqn)
 
             if not parent_component:
                 return
@@ -296,9 +316,17 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
         self.all_components = all_components
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
-    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+    def _resolve_to_component(self, fqn: str | None) -> str | None:
+        """
+        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
+        但會過濾掉代表區域變數的 `<locals>` 雜訊。
+        """
         if not fqn:
             return None
+
+        if ".<locals>." in fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -307,7 +335,7 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
-        return None
+        return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
         try:
@@ -391,7 +419,7 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
                 return
 
             proxy_fqn = self._get_fqn_from_node(target_node)
-            proxy_component = self._resolve_to_public_component(proxy_fqn)
+            proxy_component = self._resolve_to_component(proxy_fqn)
             if proxy_fqn and not proxy_component:
                 proxy_component = proxy_fqn
             if not proxy_component:
@@ -419,7 +447,7 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
                 return
 
             target_fqn = self._get_fqn_from_node(target_node_for_fqn)
-            target_component = self._resolve_to_public_component(target_fqn)
+            target_component = self._resolve_to_component(target_fqn)
 
             if not target_component:
                 if target_fqn and target_fqn.endswith("_cv_app"):
@@ -462,9 +490,17 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
         """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
-    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+    def _resolve_to_component(self, fqn: str | None) -> str | None:
+        """
+        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
+        但會過濾掉代表區域變數的 `<locals>` 雜訊。
+        """
         if not fqn:
             return None
+
+        if ".<locals>." in fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -473,7 +509,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
-        return None
+        return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
         try:
@@ -490,7 +526,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
             if isinstance(current, cst.FunctionDef):
                 try:
                     fqn = self._get_fqn_from_node(current)
-                    return self._resolve_to_public_component(fqn)
+                    return self._resolve_to_component(fqn)
                 except Exception:
                     return None
             try:
@@ -516,7 +552,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
                 strategy_fqn = self._get_fqn_from_node(element.value)
                 if not strategy_fqn or not self._is_internal_fqn(strategy_fqn):
                     continue
-                strategy_component = self._resolve_to_public_component(strategy_fqn)
+                strategy_component = self._resolve_to_component(strategy_fqn)
                 if strategy_component:
                     strategy_components_in_list.append(strategy_component)
 
@@ -560,7 +596,7 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
             if not appended_fqn or not self._is_internal_fqn(appended_fqn):
                 return
 
-            strategy_component = self._resolve_to_public_component(appended_fqn)
+            strategy_component = self._resolve_to_component(appended_fqn)
             if strategy_component and consumer_component != strategy_component:
                 edge = (consumer_component, strategy_component, "uses_strategy")
                 if edge not in self.semantic_edges:
@@ -591,9 +627,17 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
         """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages) or "docs_src" in fqn
 
-    def _resolve_to_public_component(self, fqn: str | None) -> str | None:
+    def _resolve_to_component(self, fqn: str | None) -> str | None:
+        """
+        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
+        但會過濾掉代表區域變數的 `<locals>` 雜訊。
+        """
         if not fqn:
             return None
+
+        if ".<locals>." in fqn:
+            return None
+
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -604,7 +648,7 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
                 return potential_component
         if "docs_src" in fqn:
             return fqn
-        return None
+        return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
         try:
@@ -639,7 +683,7 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
         if not provider_fqn or not self._is_internal_fqn(provider_fqn):
             return
 
-        provider_component = self._resolve_to_public_component(provider_fqn)
+        provider_component = self._resolve_to_component(provider_fqn)
         if provider_component and endpoint_component != provider_component:
             edge = (endpoint_component, provider_component, "depends_on")
             if edge not in self.semantic_edges:
@@ -666,7 +710,7 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
                 return
 
             endpoint_fqn = self._get_fqn_from_node(node.name)
-            endpoint_component = self._resolve_to_public_component(endpoint_fqn)
+            endpoint_component = self._resolve_to_component(endpoint_fqn)
             if not endpoint_component:
                 return
 
