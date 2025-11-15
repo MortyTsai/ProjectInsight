@@ -67,28 +67,54 @@ def _write_debug_log(output_path: Path, project_name: str, filtered_components: 
         logging.error(f"寫入除錯日誌時發生錯誤: {e}")
 
 
-def _generate_adjacency_list_text(graph_data: dict[str, Any]) -> list[str]:
-    """將圖形資料轉換為最高效的鄰接串列 Markdown 格式。"""
+def _generate_adjacency_list_text(graph_data: dict[str, Any], context_packages: list[str]) -> list[str]:
+    """
+    將圖形資料轉換為最高效的、帶有節點類型標籤的鄰接串列 Markdown 格式。
+    """
     edges = graph_data.get("edges", [])
     semantic_edges = graph_data.get("semantic_edges", [])
+    high_level_components = graph_data.get("high_level_components", set())
 
     adjacency_list = defaultdict(list)
+    all_nodes = set()
+
+    def get_node_tag(fqn: str) -> str:
+        """根據節點 FQN 返回其類型標籤。"""
+        if fqn in high_level_components:
+            return ""
+        is_external = not any(fqn.startswith(pkg) for pkg in context_packages)
+        if is_external:
+            return " (external)"
+        return " (private)"
 
     for u, v, label in semantic_edges:
+        all_nodes.add(u)
+        all_nodes.add(v)
         adjacency_list[u].append(f"- {label.upper()}: {v}")
 
     for caller, callee in edges:
+        all_nodes.add(caller)
+        all_nodes.add(callee)
         adjacency_list[caller].append(f"- CALLS: {callee}")
 
-    if not adjacency_list:
+    if not all_nodes:
         return []
+
+    tagged_node_map = {node: f"{node}{get_node_tag(node)}" for node in all_nodes}
 
     text_parts = ["<details>\n<summary>點擊展開/摺疊鄰接串列</summary>\n"]
     text_parts.append("```markdown")
     for node in sorted(adjacency_list.keys()):
-        text_parts.append(f"- **{node}**:")
+        text_parts.append(f"- **{tagged_node_map[node]}**:")
         for edge_str in sorted(adjacency_list[node]):
-            text_parts.append(f"  {edge_str}")
+            parts = edge_str.split(": ", 1)
+            if len(parts) == 2:
+                relation, target_node = parts
+                tagged_target = tagged_node_map.get(target_node, target_node)
+                text_parts.append(f"  {relation}: {tagged_target}")
+            else:
+                text_parts.append(f"  {edge_str}")
+
     text_parts.append("```\n</details>\n")
     return text_parts
 
@@ -99,6 +125,7 @@ def generate_markdown_report(
     output_path: Path,
     analysis_results: dict[str, Any],
     report_settings: dict[str, Any],
+    context_packages: list[str],
 ):
     """
     生成一份為 LLM 優化的 Markdown 分析報告，並將除錯資訊寫入單獨的日誌檔案。
@@ -120,7 +147,7 @@ def generate_markdown_report(
     component_graph_data = analysis_results.get("component_graph_data")
     if component_graph_data:
         report_parts.append("## 2. 高階組件關係圖 (鄰接串列)")
-        report_parts.extend(_generate_adjacency_list_text(component_graph_data))
+        report_parts.extend(_generate_adjacency_list_text(component_graph_data, context_packages))
 
     concept_dot = analysis_results.get("concept_flow_dot_source")
     if concept_dot:
