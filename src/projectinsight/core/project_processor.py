@@ -181,6 +181,7 @@ class ProjectProcessor:
                 output_path=report_output_path,
                 analysis_results=report_analysis_results,
                 report_settings=self.config.get("report_settings", {}),
+                context_packages=context_packages,
             )
 
         logging.info(f"========== 專案 '{self.project_name}' 處理完成 ==========\n")
@@ -283,6 +284,7 @@ class ProjectProcessor:
                 project_name=self.project_name,
                 layer_info=architecture_layers,
                 comp_graph_config=comp_graph_config,
+                context_packages=context_packages,
             )
             report_analysis_results["filtered_components"] = filtered_components
 
