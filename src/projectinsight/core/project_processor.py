@@ -51,6 +51,7 @@ from projectinsight.utils.path_utils import find_top_level_packages
 
 ASSESSMENT_THRESHOLDS = {
     "warn_definitions": 3000,
+    "min_meaningful_nodes": 5,  # [新] 後分析驗證的閾值
 }
 
 
@@ -126,14 +127,34 @@ class ProjectProcessor:
         logging.info("--- 開始執行專案體量預評估 ---")
         scan_results = component_parser.quick_ast_scan(python_source_root, py_files, context_packages)
 
+        # [!!] 智慧對話循環
         if self._needs_wizard(scan_results["definition_count"]):
             wizard = InteractiveWizard(self.config_path, scan_results, target_project_root)
-            action = wizard.run()
-            if action == "exit":
-                logging.info("使用者選擇退出。")
-                return
-            self.config_loader = ConfigLoader(self.config_path)
-            self.config = self.config_loader.config
+            wizard.prepare_recommendations()
+            failed_attempts: list[str] = []
+            while True:
+                action = wizard.run(scan_results["definition_count"], failed_attempts)
+                if action == "exit":
+                    logging.info("使用者選擇退出。")
+                    return
+                # 重新載入可能已更新的設定
+                self.config_loader = ConfigLoader(self.config_path)
+                self.config = self.config_loader.config
+                # 如果使用者選擇了強制執行或過濾，則跳出循環
+                if self.config.get("force_analysis") or self.config.get("visualization", {}).get(
+                    "component_interaction_graph", {}
+                ).get("filtering", {}).get("exclude_nodes"):
+                    break
+
+                # 執行後分析驗證
+                is_meaningful, entrypoint = self._post_analysis_validation(
+                    python_source_root, py_files_abs_str, scan_results, context_packages
+                )
+                if is_meaningful:
+                    logging.info(f"入口點 '{entrypoint}' 產生了有意義的圖表，繼續執行完整分析。")
+                    break  # 驗證成功，跳出循環
+                if entrypoint:
+                    failed_attempts.append(entrypoint)
 
         logging.info("初始化 LibCST FullRepoManager 並解析快取...")
         providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
@@ -185,6 +206,56 @@ class ProjectProcessor:
             )
 
         logging.info(f"========== 專案 '{self.project_name}' 處理完成 ==========\n")
+
+    def _post_analysis_validation(
+        self,
+        python_source_root: Path,
+        py_files_abs_str: list[str],
+        scan_results: dict[str, Any],
+        context_packages: list[str],
+    ) -> tuple[bool, str | None]:
+        """
+        執行一次輕量級的聚焦分析，以驗證選擇的入口點是否有意義。
+        """
+        focus_config = self.config.get("visualization", {}).get("component_interaction_graph", {}).get("focus", {})
+        entrypoints = focus_config.get("entrypoints")
+        if not entrypoints:
+            return True, None  # 沒有入口點，視為非聚焦模式，直接通過
+
+        entrypoint = entrypoints[0]
+        logging.info(f"--- [後分析驗證] 正在驗證入口點: {entrypoint} ---")
+
+        # 為了驗證，我們需要一個輕量級的分析流程
+        try:
+            # 1. 建立一個臨時的 RepoManager
+            providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
+            repo_manager = FullRepoManager(str(python_source_root.resolve()), py_files_abs_str, providers)
+            repo_manager.resolve_cache()
+
+            # 2. 執行 LibCST 解析
+            parser_results = component_parser.full_libcst_analysis(
+                repo_manager=repo_manager,
+                context_packages=context_packages,
+                pre_scan_results=scan_results["pre_scan_results"],
+                initial_definition_map=scan_results["definition_to_module_map"],
+                alias_exclude_patterns=[],
+            )
+
+            # 3. 建立圖資料
+            graph_data = build_component_graph_data(
+                call_graph=parser_results.get("call_graph", set()),
+                all_components=parser_results.get("components", set()),
+                definition_to_module_map=parser_results.get("definition_to_module_map", {}),
+                docstring_map={},
+                focus_config=focus_config,
+            )
+
+            node_count = len(graph_data.get("nodes", []))
+            logging.info(f"--- [後分析驗證] 入口點 '{entrypoint}' 生成了 {node_count} 個節點。 ---")
+            return node_count >= ASSESSMENT_THRESHOLDS["min_meaningful_nodes"], entrypoint
+        except Exception as e:
+            logging.error(f"後分析驗證期間發生錯誤: {e}", exc_info=True)
+            return False, entrypoint
 
     def _prepare_paths(self) -> tuple[Path | None, Path | None, Path | None]:
         """根據設定準備所有需要的路徑。"""
