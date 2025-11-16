@@ -25,18 +25,19 @@ class InteractiveWizard:
         self.config_path = config_path
         self.scan_results = scan_results
         self.project_root = project_root
+        self.sorted_candidates: list[tuple[str, float]] = []
 
-    def run(self) -> str:
+    def prepare_recommendations(self):
         """
-        執行互動式精靈，並回傳使用者的最終決定 ('proceed' 或 'exit')。
+        [新] 準備完整的候選者排序列表，但不立即顯示。
         """
-        definition_count = self.scan_results["definition_count"]
         pre_scan_results = self.scan_results["pre_scan_results"]
         module_import_graph = self.scan_results["module_import_graph"]
         definition_to_module_map = self.scan_results["definition_to_module_map"]
+        all_definitions = self.scan_results["all_definitions"]
 
         scorer = HeuristicsScorer()
-        heuristic_scores = scorer.score(pre_scan_results)
+        heuristic_scores = scorer.score(pre_scan_results, all_definitions)
         rules = scorer.rules
         weights = rules.get("weights", {})
         entry_points_bonus = rules.get("entry_points_bonus", 150)
@@ -53,14 +54,24 @@ class InteractiveWizard:
 
         for fqn in all_definition_fqns:
             h_score = heuristic_scores.get(fqn, 0.0)
-
             module_path = definition_to_module_map.get(fqn)
             if not module_path:
                 continue
 
-            hub_score = 0.0
-            if module_path in hits_scores:
-                hub_score = hits_scores[module_path].get("hub", 0.0) * 100
+            propagated_centrality_score = 0.0
+            path_parts = module_path.split(".")
+            decay_factor = 0.85
+
+            for i in range(len(path_parts), 0, -1):
+                current_path = ".".join(path_parts[:i])
+                if current_path in hits_scores:
+                    hub_score = hits_scores[current_path].get("hub", 0.0)
+                    authority_score = hits_scores[current_path].get("authority", 0.0)
+                    current_centrality = (hub_score * 0.5 + authority_score * 1.5) * 100
+                    depth = len(path_parts) - i
+                    decayed_score = current_centrality * (decay_factor**depth)
+                    if decayed_score > propagated_centrality_score:
+                        propagated_centrality_score = decayed_score
 
             framework_score = 0.0
             for pattern, bonus in framework_bonus_scores.items():
@@ -73,27 +84,35 @@ class InteractiveWizard:
 
             total_score = (
                 (h_score * weights.get("heuristic_score", 1.0))
-                + (hub_score * weights.get("hub_score", 1.0))
+                + (propagated_centrality_score * weights.get("centrality_score", 1.0))
                 + (framework_score * weights.get("entry_point_score", 1.0))
                 + (entry_point_score * weights.get("entry_point_score", 1.0))
             )
             combined_scores[fqn] = total_score
 
-        sorted_candidates = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
+        self.sorted_candidates = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
 
-        recommendations: list[tuple[str, float]] = []
-        seen_modules: set[str] = set()
+        logging.debug("--- [除錯探針] 智慧推薦引擎候選者 Top 20 ---")
+        for i, (fqn, score) in enumerate(self.sorted_candidates[:20]):
+            logging.debug(f"  {i + 1}. {fqn} (Score: {score:.2f})")
+        logging.debug("-------------------------------------------------")
 
-        for fqn, score in sorted_candidates:
-            module_path = definition_to_module_map.get(fqn)
-            if not module_path:
-                continue
+    def run(self, definition_count: int, failed_attempts: list[str] | None = None) -> str:
+        """
+        執行互動式精靈，並回傳使用者的最終決定 ('proceed' 或 'exit')。
+        [改造] 現在可以接收一個失敗嘗試的列表。
+        """
+        if not self.sorted_candidates:
+            self.prepare_recommendations()
 
-            if module_path not in seen_modules:
-                recommendations.append((fqn, score))
-                seen_modules.add(module_path)
-            if len(recommendations) >= 5:
-                break
+        if failed_attempts:
+            print("\n" + "-" * 60)
+            logging.warning(f"您選擇的入口點 '{failed_attempts[-1]}' 未能產生有意義的圖表。")
+            logging.info("這通常意味著它是一個代理、孤立的組件或過於簡單。請嘗試其他選項。")
+            print("-" * 60)
+
+        filtered_candidates = [cand for cand in self.sorted_candidates if cand[0] not in (failed_attempts or [])]
+        recommendations = filtered_candidates[:5]
 
         self._display_menu(definition_count, recommendations)
         updates, action = self._get_user_choice(recommendations)
