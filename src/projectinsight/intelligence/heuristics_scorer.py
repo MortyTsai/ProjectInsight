@@ -37,12 +37,13 @@ class HeuristicsScorer:
             logging.error(f"無法載入預設啟發式規則: {e}")
             return {}
 
-    def score(self, pre_scan_results: dict[str, Any]) -> dict[str, float]:
+    def score(self, pre_scan_results: dict[str, Any], all_definitions: dict[str, str]) -> dict[str, float]:
         """
         對 quick_ast_scan 的結果進行計分。
 
         Args:
             pre_scan_results: 來自 component_parser.quick_ast_scan 的結果。
+            all_definitions: 一個包含所有定義 FQN 及其類型 ('class'/'function') 的字典。
 
         Returns:
             一個字典，鍵是定義的 FQN，值是其啟發式分數。
@@ -56,6 +57,8 @@ class HeuristicsScorer:
         module_path_rules = scoring_rules.get("by_module_path", [])
         def_name_rules = scoring_rules.get("by_definition_name", [])
         feature_rules = scoring_rules.get("by_code_feature", [])
+        type_bonus_rules = scoring_rules.get("by_definition_type", {})  # [!!] 新增
+        class_bonus = type_bonus_rules.get("class", 5)  # [!!] 新增
 
         for scan_data in pre_scan_results.values():
             visitor: CodeVisitor = scan_data["visitor"]
@@ -79,7 +82,12 @@ class HeuristicsScorer:
                     if fnmatch.fnmatch(def_name, rule["pattern"]):
                         def_name_score += rule["score"]
 
-                total_score = path_score + feature_score + def_name_score
+                # [!!] 新增：應用類別獎勵
+                type_bonus = 0.0
+                if all_definitions.get(def_fqn) == "class":
+                    type_bonus = class_bonus
+
+                total_score = path_score + feature_score + def_name_score + type_bonus
                 scores[def_fqn] = total_score
 
         logging.info(f"啟發式計分完成，共為 {len(scores)} 個定義計算了分數。")
