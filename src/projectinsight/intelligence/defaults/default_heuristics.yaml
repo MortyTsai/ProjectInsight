@@ -1,23 +1,25 @@
 # src/projectinsight/intelligence/defaults/default_heuristics.yaml
 # ======================================================================
-# ProjectInsight - 智慧入口點發現 - 預設啟發式計分規則 (V10 - 結構優先版)
+# ProjectInsight - 智慧入口點發現 - 預設啟發式計分規則 (V13 - 決勝分版)
 # ======================================================================
 # 說明:
-# V10 版本是最終的調優版。它極大地提升了圖論中心性的權重，確保了
-# 專案的結構中心（被廣泛導入的核心 API）能夠超越邊緣的、僅僅是命名
-# 討巧的輔助腳本。
+# V13 版本為核心架構模式（如 Router, API, App）增加了顯著的啟發式
+# 獎勵，以作為打破同分僵局的最終決勝分。
 # ======================================================================
 
 # --- 權重設定 ---
 weights:
-  heuristic_score: 0.5      # [再次降低] 啟發式猜測的權重降至最低
-  hub_score: 3.5            # [再次提升] 結構中心性的權重提升至最高
-  entry_point_score: 3.0    # [保持] 標準化入口點依然是最高權重信號
+  heuristic_score: 0.2
+  centrality_score: 3.5
+  entry_point_score: 3.0
 
 # --- 啟發式計分規則 (Heuristic Scoring Rules) ---
 scoring_rules:
+  by_definition_type:
+    class: 5
+
   by_module_path:
-    - { pattern: "*.__main__", score: 40 } # [降低]
+    - { pattern: "*.__main__", score: 40 }
     - { pattern: "*.main", score: 10 }
     - { pattern: "*.app", score: 10 }
     - { pattern: "*.server", score: 10 }
@@ -36,9 +38,13 @@ scoring_rules:
     - { pattern: "*helpers*", score: -30 }
     - { pattern: "*__init__", score: -100 }
   by_definition_name:
-    - { pattern: "main", score: 15 }       # [降低]
-    - { pattern: "run", score: 10 }        # [降低]
-    - { pattern: "start", score: 10 }       # [降低]
+    - { pattern: "*Router", score: 25 }
+    - { pattern: "*API", score: 25 }
+    - { pattern: "*App", score: 20 }
+    - { pattern: "*Application", score: 20 }
+    - { pattern: "main", score: 15 }
+    - { pattern: "run", score: 10 }
+    - { pattern: "start", score: 10 }
     - { pattern: "app", score: 15 }
     - { pattern: "application", score: 15 }
     - { pattern: "handler", score: 10 }
@@ -46,21 +52,8 @@ scoring_rules:
     - { pattern: "service", score: 5 }
     - { pattern: "manager", score: 5 }
   by_code_feature:
-    - { feature: "has___main__block", score: 20 } # [大幅降低]
+    - { feature: "has___main__block", score: 20 }
 
 # --- 生態位分析規則 (Ecosystem Analysis Rules) ---
 entry_points_bonus: 150
 
-# 專家級獎勵規則
-frameworks:
-  django:
-    project_name: "Django"
-    bonus_points:
-      - { pattern: "django.core.handlers.*", score: 100 }
-      - { pattern: "django.urls.*", score: 50 }
-      - { pattern: "django.db.models.base.Model", score: 40 }
-  pandas:
-    project_name: "pandas"
-    bonus_points:
-      - { pattern: "pandas.core.frame.DataFrame", score: 120 }
-      - { pattern: "pandas.core.series.Series", score: 100 }
