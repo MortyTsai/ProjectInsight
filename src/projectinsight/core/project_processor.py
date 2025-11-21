@@ -6,11 +6,11 @@ ProjectInsight 的核心處理引擎。
 它負責以下核心職責：
 1.  載入並解析專案設定檔。
 2.  準備並驗證所有必要的路徑。
-3.  協調執行「專案體量預評估」，並在必要時啟動「互動式精靈」。
+3.  協調執行「專案體量預評估」。
 4.  建立並管理 LibCST 的 `FullRepoManager`，為所有解析器提供統一的語法樹上下文。
-5.  根據設定，依次調用 `parsers`, `semantics`, `builders`, `renderers`, 和 `reporters`
-    中的各個子系統，完成從原始碼到最終報告的完整轉換流程。
-6.  實現了對不同專案結構（如 `src` 佈局和扁平佈局）的健壯適應性。
+5.  優先執行完整的 LibCST 解析與語義分析，建立事實基礎。
+6.  於真實的圖資料判斷是否啟動「互動式精靈」。
+7.  根據設定，依次調用 `builders`, `renderers`, 和 `reporters` 完成報告生成。
 """
 
 # 1. 標準庫導入
@@ -50,8 +50,8 @@ from projectinsight.semantics import dynamic_behavior_analyzer, semantic_link_an
 from projectinsight.utils.path_utils import find_top_level_packages
 
 ASSESSMENT_THRESHOLDS = {
-    "warn_definitions": 3000,
-    "min_meaningful_nodes": 5,  # [新] 後分析驗證的閾值
+    "max_nodes_before_wizard": 300,
+    "min_meaningful_nodes": 5,
 }
 
 
@@ -98,8 +98,6 @@ class ProjectProcessor:
             logging.error("無法確定專案的解析上下文。請檢查專案結構，或在設定檔中手動指定 `root_package_name`。")
             return
 
-        logging.info(f"將執行以下分析: {', '.join(analysis_types)}")
-
         py_files_in_context: set[Path] = set()
         all_py_files_in_root = list(python_source_root.rglob("*.py"))
         context_packages_tuple = tuple(context_packages)
@@ -120,43 +118,13 @@ class ProjectProcessor:
             except ValueError:
                 continue
         py_files = sorted(py_files_in_context)
-
         py_files_abs_str = [str(p.resolve()) for p in py_files]
         logging.info(f"在解析上下文中找到 {len(py_files)} 個 Python 檔案進行分析。")
 
-        logging.info("--- 開始執行專案體量預評估 ---")
+        logging.info("--- [Phase 1] 執行快速 AST 掃描 ---")
         scan_results = component_parser.quick_ast_scan(python_source_root, py_files, context_packages)
 
-        # [!!] 智慧對話循環
-        if self._needs_wizard(scan_results["definition_count"]):
-            wizard = InteractiveWizard(self.config_path, scan_results, target_project_root)
-            wizard.prepare_recommendations()
-            failed_attempts: list[str] = []
-            while True:
-                action = wizard.run(scan_results["definition_count"], failed_attempts)
-                if action == "exit":
-                    logging.info("使用者選擇退出。")
-                    return
-                # 重新載入可能已更新的設定
-                self.config_loader = ConfigLoader(self.config_path)
-                self.config = self.config_loader.config
-                # 如果使用者選擇了強制執行或過濾，則跳出循環
-                if self.config.get("force_analysis") or self.config.get("visualization", {}).get(
-                    "component_interaction_graph", {}
-                ).get("filtering", {}).get("exclude_nodes"):
-                    break
-
-                # 執行後分析驗證
-                is_meaningful, entrypoint = self._post_analysis_validation(
-                    python_source_root, py_files_abs_str, scan_results, context_packages
-                )
-                if is_meaningful:
-                    logging.info(f"入口點 '{entrypoint}' 產生了有意義的圖表，繼續執行完整分析。")
-                    break  # 驗證成功，跳出循環
-                if entrypoint:
-                    failed_attempts.append(entrypoint)
-
-        logging.info("初始化 LibCST FullRepoManager 並解析快取...")
+        logging.info("--- [Phase 2] 初始化 LibCST FullRepoManager ---")
         providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
         try:
             repo_manager = FullRepoManager(str(python_source_root.resolve()), py_files_abs_str, providers)
@@ -166,7 +134,7 @@ class ProjectProcessor:
             logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}", exc_info=True)
             return
 
-        logging.info("--- 開始執行完整程式碼解析 (使用 LibCST 引擎) ---")
+        logging.info("--- [Phase 3] 執行完整程式碼解析 (LibCST) ---")
         parser_settings = self.config.get("parser_settings", {})
         alias_resolution_settings = parser_settings.get("alias_resolution", {})
 
@@ -177,6 +145,55 @@ class ProjectProcessor:
             initial_definition_map=scan_results["definition_to_module_map"],
             alias_exclude_patterns=alias_resolution_settings.get("exclude_patterns", []),
         )
+
+        logging.info("--- [Phase 4] 執行靜態語義連結分析 ---")
+        semantic_results = semantic_link_analyzer.analyze_semantic_links(
+            repo_manager=repo_manager,
+            pre_scan_results=scan_results["pre_scan_results"],
+            context_packages=context_packages,
+            all_components=parser_results.get("components", set()),
+        )
+
+        full_graph_data = build_component_graph_data(
+            call_graph=parser_results.get("call_graph", set()),
+            all_components=parser_results.get("components", set()),
+            definition_to_module_map=parser_results.get("definition_to_module_map", {}),
+            docstring_map={},
+            show_internal_calls=False,
+            filtering_config=None,
+            focus_config=None,
+            semantic_edges=semantic_results.get("semantic_edges", set()),
+        )
+        total_nodes = len(full_graph_data.get("nodes", []))
+        logging.info(f"--- [評估] 專案全景圖包含 {total_nodes} 個高階組件節點。 ---")
+
+        if self._needs_wizard(total_nodes):
+            wizard = InteractiveWizard(self.config_path, target_project_root)
+
+            failed_attempts: list[str] = []
+            while True:
+                action = wizard.run(full_graph_data, context_packages, failed_attempts)
+                if action == "exit":
+                    logging.info("使用者選擇退出。")
+                    return
+
+                self.config_loader = ConfigLoader(self.config_path)
+                self.config = self.config_loader.config
+
+                if self.config.get("force_analysis") or self.config.get("visualization", {}).get(
+                    "component_interaction_graph", {}
+                ).get("filtering", {}).get("exclude_nodes"):
+                    break
+
+                is_meaningful, entrypoint = self._post_analysis_validation(
+                    parser_results, semantic_results, self.config
+                )
+                if is_meaningful:
+                    logging.info(f"入口點 '{entrypoint}' 驗證成功，繼續生成報告。")
+                    break
+                if entrypoint:
+                    failed_attempts.append(entrypoint)
+
         docstring_map = parser_results.get("docstring_map", {})
         report_analysis_results: dict[str, Any] = {}
 
@@ -186,11 +203,10 @@ class ProjectProcessor:
                 py_files,
                 python_source_root,
                 parser_results,
+                semantic_results,
                 docstring_map,
                 report_analysis_results,
                 output_dir,
-                scan_results["pre_scan_results"],
-                repo_manager,
                 context_packages,
             )
 
@@ -207,47 +223,33 @@ class ProjectProcessor:
 
         logging.info(f"========== 專案 '{self.project_name}' 處理完成 ==========\n")
 
+    @staticmethod
     def _post_analysis_validation(
-        self,
-        python_source_root: Path,
-        py_files_abs_str: list[str],
-        scan_results: dict[str, Any],
-        context_packages: list[str],
+        parser_results: dict[str, Any],
+        semantic_results: dict[str, Any],
+        config: dict[str, Any],
     ) -> tuple[bool, str | None]:
         """
-        執行一次輕量級的聚焦分析，以驗證選擇的入口點是否有意義。
+        使用記憶體中已有的解析結果進行快速驗證，無需重新解析。
         """
-        focus_config = self.config.get("visualization", {}).get("component_interaction_graph", {}).get("focus", {})
+        focus_config = config.get("visualization", {}).get("component_interaction_graph", {}).get("focus", {})
         entrypoints = focus_config.get("entrypoints")
         if not entrypoints:
-            return True, None  # 沒有入口點，視為非聚焦模式，直接通過
+            return True, None
 
         entrypoint = entrypoints[0]
         logging.info(f"--- [後分析驗證] 正在驗證入口點: {entrypoint} ---")
 
-        # 為了驗證，我們需要一個輕量級的分析流程
         try:
-            # 1. 建立一個臨時的 RepoManager
-            providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
-            repo_manager = FullRepoManager(str(python_source_root.resolve()), py_files_abs_str, providers)
-            repo_manager.resolve_cache()
-
-            # 2. 執行 LibCST 解析
-            parser_results = component_parser.full_libcst_analysis(
-                repo_manager=repo_manager,
-                context_packages=context_packages,
-                pre_scan_results=scan_results["pre_scan_results"],
-                initial_definition_map=scan_results["definition_to_module_map"],
-                alias_exclude_patterns=[],
-            )
-
-            # 3. 建立圖資料
             graph_data = build_component_graph_data(
                 call_graph=parser_results.get("call_graph", set()),
                 all_components=parser_results.get("components", set()),
                 definition_to_module_map=parser_results.get("definition_to_module_map", {}),
                 docstring_map={},
+                show_internal_calls=False,
+                filtering_config=None,
                 focus_config=focus_config,
+                semantic_edges=semantic_results.get("semantic_edges", set()),
             )
 
             node_count = len(graph_data.get("nodes", []))
@@ -258,7 +260,10 @@ class ProjectProcessor:
             return False, entrypoint
 
     def _prepare_paths(self) -> tuple[Path | None, Path | None, Path | None]:
-        """根據設定準備所有需要的路徑。"""
+        """
+        根據設定準備所有需要的路徑。
+        增強路徑偵測邏輯，支援 'lib' 佈局，並優先使用 root_package_name 進行定位。
+        """
         target_project_path_str = self.config.get("target_project_path")
         output_dir_str = self.config.get("output_dir", "output")
 
@@ -272,17 +277,34 @@ class ProjectProcessor:
         output_dir = (config_dir / output_dir_str).resolve()
         os.makedirs(output_dir, exist_ok=True)
 
-        potential_src_dir = target_project_root / "src"
-        if potential_src_dir.is_dir():
-            python_source_root = potential_src_dir
+        root_package_name = self.config.get("root_package_name")
+        common_layout_dirs = ["src", "lib"]
+
+        if root_package_name:
+            for layout_dir in common_layout_dirs:
+                potential_root = target_project_root / layout_dir
+                if (potential_root / root_package_name).exists():
+                    logging.info(f"根據 `root_package_name` 偵測到 '{layout_dir}' 佈局。")
+                    return target_project_root, potential_root, output_dir
+
+            if (target_project_root / root_package_name).exists():
+                logging.info("根據 `root_package_name` 偵測到扁平佈局 (根目錄)。")
+                return target_project_root, target_project_root, output_dir
+
+        potential_src = target_project_root / "src"
+        if potential_src.is_dir() and (not root_package_name or (potential_src / root_package_name).exists()):
             logging.info("偵測到 'src' 佈局。")
-        else:
-            python_source_root = target_project_root
-            logging.info("未偵測到 'src' 佈局，將使用專案根目錄作為 Python 原始碼路徑。")
+            return target_project_root, potential_src, output_dir
 
-        return target_project_root, python_source_root, output_dir
+        potential_lib = target_project_root / "lib"
+        if potential_lib.is_dir():
+            logging.info("偵測到 'lib' 佈局。")
+            return target_project_root, potential_lib, output_dir
 
-    def _needs_wizard(self, definition_count: int) -> bool:
+        logging.info("未偵測到標準佈局，將使用專案根目錄作為 Python 原始碼路徑。")
+        return target_project_root, target_project_root, output_dir
+
+    def _needs_wizard(self, node_count: int) -> bool:
         """判斷是否需要啟動互動式精靈。"""
         vis_config = self.config.get("visualization", {})
         comp_vis_config = vis_config.get("component_interaction_graph", {})
@@ -291,7 +313,7 @@ class ProjectProcessor:
         is_forced = self.config.get("force_analysis", False)
 
         return (
-            definition_count > ASSESSMENT_THRESHOLDS["warn_definitions"]
+            node_count > ASSESSMENT_THRESHOLDS["max_nodes_before_wizard"]
             and not has_focus
             and not has_filter
             and not is_forced
@@ -304,11 +326,10 @@ class ProjectProcessor:
         py_files: list[Path],
         python_source_root: Path,
         parser_results: dict[str, Any],
+        semantic_results: dict[str, Any],
         docstring_map: dict[str, str],
         report_analysis_results: dict[str, Any],
         output_dir: Path,
-        pre_scan_results: dict[str, Any],
-        repo_manager: FullRepoManager,
         context_packages: list[str],
     ):
         """執行單一類型的分析。"""
@@ -321,15 +342,8 @@ class ProjectProcessor:
             layout_config = comp_graph_config.get("layout", {})
             semantic_config = comp_graph_config.get("semantic_analysis", {})
 
-            semantic_edges: set[tuple[str, str, str]] = set()
+            semantic_edges = set()
             if semantic_config.get("enabled", True):
-                logging.info("--- 開始執行靜態語義連結分析 ---")
-                semantic_results = semantic_link_analyzer.analyze_semantic_links(
-                    repo_manager=repo_manager,
-                    pre_scan_results=pre_scan_results,
-                    context_packages=context_packages,
-                    all_components=parser_results.get("components", set()),
-                )
                 semantic_edges = semantic_results.get("semantic_edges", set())
             else:
                 logging.info("--- 靜態語義連結分析已在設定中被禁用 ---")
