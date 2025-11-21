@@ -34,7 +34,7 @@ class CodeVisitor(ast.NodeVisitor):
         self.file_path = file_path
         self.context_packages = context_packages
         self.current_scope = [self.module_path]
-        self.definitions: dict[str, str] = {}  # [!!] 修正：儲存 FQN -> 類型 ('class'/'function')
+        self.definitions: dict[str, str] = {}
         self.components: set[str] = set()
         self.definition_to_module_map: dict[str, str] = {}
         self.docstring_map: dict[str, str] = {}
@@ -86,7 +86,7 @@ class CodeVisitor(ast.NodeVisitor):
         is_private = node.name.startswith("_") and not node.name.startswith("__")
 
         scope_name = ".".join([*self.current_scope, node.name])
-        self.definitions[scope_name] = "function"  # [!!] 記錄類型
+        self.definitions[scope_name] = "function"
         self.definition_to_module_map[scope_name] = self.module_path
         self.definition_count += 1
 
@@ -105,7 +105,7 @@ class CodeVisitor(ast.NodeVisitor):
         is_private = node.name.startswith("_") and not node.name.startswith("__")
 
         scope_name = ".".join([*self.current_scope, node.name])
-        self.definitions[scope_name] = "class"  # [!!] 記錄類型
+        self.definitions[scope_name] = "class"
         if not is_private:
             self.components.add(scope_name)
         self.definition_to_module_map[scope_name] = self.module_path
@@ -130,7 +130,7 @@ def quick_ast_scan(project_path: Path, py_files: list[Path], context_packages: l
     pre_scan_results = {}
     module_import_graph: dict[str, set[str]] = {}
     definition_to_module_map: dict[str, str] = {}
-    all_definitions: dict[str, str] = {}  # [!!] 新增：收集所有定義及其類型
+    all_definitions: dict[str, str] = {}
 
     for file_path in py_files:
         try:
@@ -157,7 +157,7 @@ def quick_ast_scan(project_path: Path, py_files: list[Path], context_packages: l
             if visitor.internal_imports:
                 module_import_graph[visitor.module_path] = visitor.internal_imports
             definition_to_module_map.update(visitor.definition_to_module_map)
-            all_definitions.update(visitor.definitions)  # [!!] 收集
+            all_definitions.update(visitor.definitions)
 
         except Exception as e:
             logging.debug(f"快速掃描時無法分析檔案 {file_path}: {e}")
@@ -170,7 +170,7 @@ def quick_ast_scan(project_path: Path, py_files: list[Path], context_packages: l
         "pre_scan_results": pre_scan_results,
         "module_import_graph": module_import_graph,
         "definition_to_module_map": definition_to_module_map,
-        "all_definitions": all_definitions,  # [!!] 回傳
+        "all_definitions": all_definitions,
     }
 
 
