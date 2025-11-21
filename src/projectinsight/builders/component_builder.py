@@ -1,6 +1,7 @@
 # src/projectinsight/builders/component_builder.py
 """
 提供高階組件互動圖的建構邏輯。
+實作智慧自動降級 (Smart Fallback)：當雙向分析導致節點爆炸時，自動切換至單向模式。
 """
 
 # 1. 標準庫導入
@@ -17,18 +18,23 @@ from typing import Any
 
 
 def _perform_focus_analysis(
-    all_nodes: set[str], all_edges: set[tuple[str, str]], focus_config: dict[str, Any], current_depth: int
+    all_nodes: set[str],
+    all_edges: set[tuple[str, str]],
+    focus_config: dict[str, Any],
+    current_depth: int,
 ) -> tuple[set[str], set[tuple[str, str]]]:
     """
-    根據聚焦設定，在有向圖上執行雙向 BFS 以縮小圖的規模。
+    根據聚焦設定，在有向圖上執行 BFS 以縮小圖的規模。
+    支援方向控制：'both', 'upstream' (predecessors), 'downstream' (successors)。
     """
     entrypoints = focus_config.get("entrypoints", [])
+    direction = focus_config.get("direction", "both")
+
     if not entrypoints:
         return all_nodes, all_edges
 
-    logging.debug(f"--- FOCUS ANALYSIS (depth={current_depth}) ---")
+    logging.debug(f"--- FOCUS ANALYSIS (depth={current_depth}, direction={direction}) ---")
     logging.debug(f"Entrypoints: {entrypoints}")
-    logging.debug(f"Received all_edges count: {len(all_edges)}")
 
     successors: dict[str, list[str]] = defaultdict(list)
     predecessors: dict[str, list[str]] = defaultdict(list)
@@ -36,54 +42,48 @@ def _perform_focus_analysis(
         successors[u].append(v)
         predecessors[v].append(u)
 
-    entrypoint_node = entrypoints[0]
-    if entrypoint_node in successors:
-        logging.debug(f"Successors of '{entrypoint_node}': {successors[entrypoint_node]}")
-    else:
-        logging.debug(f"'{entrypoint_node}' has NO successors in the graph.")
-    if entrypoint_node in predecessors:
-        logging.debug(f"Predecessors of '{entrypoint_node}': {predecessors[entrypoint_node]}")
-    else:
-        logging.debug(f"'{entrypoint_node}' has NO predecessors in the graph.")
-
-    visited_successors = set()
-    queue = deque([(ep, 0) for ep in entrypoints if ep in all_nodes])
+    final_nodes = set()
     for ep in entrypoints:
         if ep in all_nodes:
-            visited_successors.add(ep)
+            final_nodes.add(ep)
 
-    while queue:
-        node, depth = queue.popleft()
-        if depth >= current_depth:
-            continue
-        for neighbor in successors.get(node, []):
-            if neighbor not in visited_successors:
-                visited_successors.add(neighbor)
-                queue.append((neighbor, depth + 1))
+    if direction in ("both", "downstream"):
+        visited_successors = set(final_nodes)
+        queue_succ = deque([(ep, 0) for ep in final_nodes])
 
-    visited_predecessors = set()
-    queue = deque([(ep, 0) for ep in entrypoints if ep in all_nodes])
-    for ep in entrypoints:
-        if ep in all_nodes:
-            visited_predecessors.add(ep)
+        while queue_succ:
+            node, depth = queue_succ.popleft()
+            if depth >= current_depth:
+                continue
+            for neighbor in successors.get(node, []):
+                if neighbor not in visited_successors:
+                    visited_successors.add(neighbor)
+                    queue_succ.append((neighbor, depth + 1))
 
-    while queue:
-        node, depth = queue.popleft()
-        if depth >= current_depth:
-            continue
-        for neighbor in predecessors.get(node, []):
-            if neighbor not in visited_predecessors:
-                visited_predecessors.add(neighbor)
-                queue.append((neighbor, depth + 1))
+        final_nodes.update(visited_successors)
+        logging.debug(f"Collected {len(visited_successors)} nodes from downstream analysis.")
 
-    final_focused_nodes = visited_successors.union(visited_predecessors)
-    logging.debug(f"Visited successors: {len(visited_successors)}")
-    logging.debug(f"Visited predecessors: {len(visited_predecessors)}")
-    logging.debug(f"Final focused nodes count: {len(final_focused_nodes)}")
+    if direction in ("both", "upstream"):
+        visited_predecessors = set(final_nodes)
+        queue_pred = deque([(ep, 0) for ep in final_nodes])
 
-    focused_edges = {(u, v) for u, v in all_edges if u in final_focused_nodes and v in final_focused_nodes}
+        while queue_pred:
+            node, depth = queue_pred.popleft()
+            if depth >= current_depth:
+                continue
+            for neighbor in predecessors.get(node, []):
+                if neighbor not in visited_predecessors:
+                    visited_predecessors.add(neighbor)
+                    queue_pred.append((neighbor, depth + 1))
 
-    return final_focused_nodes, focused_edges
+        final_nodes.update(visited_predecessors)
+        logging.debug(f"Collected {len(visited_predecessors)} nodes from upstream analysis.")
+
+    logging.debug(f"Final focused nodes count: {len(final_nodes)}")
+
+    focused_edges = {(u, v) for u, v in all_edges if u in final_nodes and v in final_nodes}
+
+    return final_nodes, focused_edges
 
 
 def build_component_graph_data(
@@ -99,18 +99,13 @@ def build_component_graph_data(
     """
     接收由 Parser 產出的、已經被完全抽象的呼叫圖和語義連結，
     並對其進行過濾和資料結構轉換。
-    此函式不再進行任何 FQN 解析或抽象。
     """
     logging.debug("--- BUILDER: 開始建構組件圖 (職責簡化版) ---")
-    logging.debug(f"接收到已抽象的 call_graph 邊數: {len(call_graph)}")
-    if semantic_edges:
-        logging.debug(f"接收到 semantic_edges 邊數: {len(semantic_edges)}")
 
     if show_internal_calls:
         component_edges = call_graph
     else:
         component_edges = {(caller, callee) for caller, callee in call_graph if caller != callee}
-    logging.debug(f"過濾自循環後，(呼叫)邊數: {len(component_edges)}")
 
     initial_nodes: set[str] = set()
     for caller, callee in component_edges:
@@ -127,8 +122,11 @@ def build_component_graph_data(
 
     if focus_config and focus_config.get("entrypoints"):
         enable_dynamic_depth = focus_config.get("enable_dynamic_depth", True)
-        # [注意] 聚焦分析目前只作用於「呼叫邊」，語義邊會被過濾
-        # TODO: 未來可以考慮讓聚焦分析同時作用於兩種邊
+
+        current_direction = focus_config.get("direction", "both")
+        max_nodes_bidirectional = focus_config.get("max_nodes_for_bidirectional", 500)
+        auto_fallback = focus_config.get("auto_downstream_fallback", True)
+
         if enable_dynamic_depth:
             initial_depth = focus_config.get("initial_depth", 2)
             min_nodes = focus_config.get("min_nodes", 10)
@@ -136,10 +134,28 @@ def build_component_graph_data(
 
             current_depth = initial_depth
             while current_depth <= max_search_depth:
-                logging.info(f"執行聚焦分析，當前深度: {current_depth}...")
+                logging.info(f"執行聚焦分析，當前深度: {current_depth} (模式: {current_direction})...")
+
+                current_iter_config = focus_config.copy()
+                current_iter_config["direction"] = current_direction
+
                 temp_nodes, temp_edges = _perform_focus_analysis(
-                    initial_nodes, component_edges, focus_config, current_depth
+                    initial_nodes, component_edges, current_iter_config, current_depth
                 )
+
+                if current_direction == "both" and len(temp_nodes) > max_nodes_bidirectional and auto_fallback:
+                    logging.warning(
+                        f"聚焦分析節點數 ({len(temp_nodes)}) 超過雙向分析安全閾值 ({max_nodes_bidirectional})。"
+                    )
+                    logging.warning("正在自動切換至 'downstream' (單向) 模式以防止圖表爆炸...")
+
+                    current_direction = "downstream"
+                    current_iter_config["direction"] = "downstream"
+
+                    temp_nodes, temp_edges = _perform_focus_analysis(
+                        initial_nodes, component_edges, current_iter_config, current_depth
+                    )
+                    logging.info(f"切換至單向模式後，節點數降至: {len(temp_nodes)}")
 
                 if len(temp_nodes) >= min_nodes:
                     logging.info(f"找到 {len(temp_nodes)} 個節點 (>= {min_nodes})，停止增加深度。")
@@ -155,9 +171,19 @@ def build_component_graph_data(
                 current_depth += 1
         else:
             fixed_depth = focus_config.get("initial_depth", 2)
+            current_iter_config = focus_config.copy()
+            current_iter_config["direction"] = current_direction
+
             current_nodes, current_edges = _perform_focus_analysis(
-                initial_nodes, component_edges, focus_config, fixed_depth
+                initial_nodes, component_edges, current_iter_config, fixed_depth
             )
+
+            if current_direction == "both" and len(current_nodes) > max_nodes_bidirectional and auto_fallback:
+                logging.warning(f"固定深度分析節點數 ({len(current_nodes)}) 超過閾值，自動切換至 'downstream'。")
+                current_iter_config["direction"] = "downstream"
+                current_nodes, current_edges = _perform_focus_analysis(
+                    initial_nodes, component_edges, current_iter_config, fixed_depth
+                )
 
     exclude_patterns = filtering_config.get("exclude_nodes", []) if filtering_config else []
     if exclude_patterns:
