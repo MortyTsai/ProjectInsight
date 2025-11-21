@@ -1,6 +1,7 @@
 # src/projectinsight/core/config_loader.py
 """
 負責載入、合併、發現和更新所有與專案分析相關的設定。
+新增渲染超時 (render_timeout) 與聚焦分析自動降級 (auto_downstream_fallback) 的預設值。
 """
 
 # 1. 標準庫導入
@@ -30,6 +31,7 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
     "component_interaction_graph": {
         "layout_engine": "dot",
         "dpi": 200,
+        "render_timeout": 300,
         "layout": {
             "show_internal_calls": False,
             "aspect_ratio": "auto",
@@ -50,6 +52,9 @@ DEFAULT_VIS_CONFIG: dict[str, Any] = {
             "enable_dynamic_depth": True,
             "min_nodes": 10,
             "max_search_depth": 7,
+            "direction": "both",
+            "max_nodes_for_bidirectional": 500,
+            "auto_downstream_fallback": True,
         },
         "semantic_analysis": {
             "enabled": True,
