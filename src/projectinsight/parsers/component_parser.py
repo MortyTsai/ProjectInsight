@@ -1,6 +1,7 @@
 # src/projectinsight/parsers/component_parser.py
 """
 提供基於 AST 和 LibCST 的 Python 原始碼組件互動解析功能。
+修正：新增對 AsyncFunctionDef 的支援，確保 async/await 語法下的函式能被正確識別。
 """
 
 # 1. 標準庫導入
@@ -74,15 +75,19 @@ class CodeVisitor(ast.NodeVisitor):
             left = node.test.left
             comparator = node.test.comparators[0]
             if (
-                isinstance(left, ast.Name)
-                and left.id == "__name__"
-                and isinstance(comparator, ast.Constant)
-                and comparator.value == "__main__"
+                    isinstance(left, ast.Name)
+                    and left.id == "__name__"
+                    and isinstance(comparator, ast.Constant)
+                    and comparator.value == "__main__"
             ):
                 self.has_main_block = True
         self.generic_visit(node)
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        """處理 async def 定義的非同步函式。"""
+        self.visit_FunctionDef(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef):
         is_private = node.name.startswith("_") and not node.name.startswith("__")
 
         scope_name = ".".join([*self.current_scope, node.name])
@@ -180,7 +185,6 @@ def _normalize_call_fqn(callee_fqn: str, alias_map: dict[str, str]) -> str:
     """
     if callee_fqn in alias_map:
         normalized = alias_map[callee_fqn]
-        logging.debug(f"  [別名解析] '{callee_fqn}' -> '{normalized}' (直接命中)")
         return normalized
 
     parts = callee_fqn.split(".")
@@ -190,7 +194,6 @@ def _normalize_call_fqn(callee_fqn: str, alias_map: dict[str, str]) -> str:
             real_base = alias_map[potential_alias]
             method_part = ".".join(parts[i:])
             normalized = f"{real_base}.{method_part}" if method_part else real_base
-            logging.debug(f"  [別名解析] '{callee_fqn}' -> '{normalized}' (基礎路徑命中)")
             return normalized
     return callee_fqn
 
@@ -214,7 +217,7 @@ class _AliasVisitor(m.MatcherDecoratableVisitor):
     def _add_alias(self, alias_fqn: str, real_fqn: str):
         is_excluded = any(fnmatch.fnmatch(alias_fqn, pattern) for pattern in self.exclude_patterns)
 
-        if not is_excluded and self._is_internal_fqn(real_fqn) and alias_fqn != real_fqn:
+        if not is_excluded and alias_fqn != real_fqn:
             self.alias_map[alias_fqn] = real_fqn
             logging.debug(f"  [別名發現] {alias_fqn} -> {real_fqn}")
 
@@ -277,13 +280,13 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
     )
 
     def __init__(
-        self,
-        wrapper: MetadataWrapper,
-        context_packages: list[str],
-        all_components: set[str],
-        module_path: str,
-        alias_map: dict[str, str],
-        file_path: str,
+            self,
+            wrapper: MetadataWrapper,
+            context_packages: list[str],
+            all_components: set[str],
+            module_path: str,
+            alias_map: dict[str, str],
+            file_path: str,
     ):
         super().__init__()
         self.wrapper = wrapper
@@ -300,13 +303,12 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
     def _resolve_to_public_component(self, fqn: str) -> str | None:
         """
-        將任何 FQN（包括私有成員或方法）解析回其所屬的、最近的公開高階組件。
+        將 FQN 解析回其所屬的高階組件。
         """
         if not fqn:
             return None
 
         path = fqn.split(".<locals>.", 1)[0]
-
         if path in self.all_components:
             return path
 
@@ -316,7 +318,10 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
             if potential_component in self.all_components:
                 return potential_component
 
-        return None
+        if self._is_internal_fqn(fqn):
+            return None
+        else:
+            return fqn
 
     @m.visit(m.Call())
     def _handle_call_node(self, node: cst.Call) -> None:
@@ -336,11 +341,9 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
             for fqn_obj in callee_fqns:
                 original_callee_fqn = fqn_obj.name
-                if not self._is_internal_fqn(original_callee_fqn):
-                    continue
-
                 normalized_callee_fqn = _normalize_call_fqn(original_callee_fqn, self.alias_map)
                 callee_component = self._resolve_to_public_component(normalized_callee_fqn)
+
                 if not callee_component:
                     continue
 
@@ -369,15 +372,14 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
 
 def full_libcst_analysis(
-    repo_manager: FullRepoManager,
-    context_packages: list[str],
-    pre_scan_results: dict[str, Any],
-    initial_definition_map: dict[str, str],
-    alias_exclude_patterns: list[str],
+        repo_manager: FullRepoManager,
+        context_packages: list[str],
+        pre_scan_results: dict[str, Any],
+        initial_definition_map: dict[str, str],
+        alias_exclude_patterns: list[str],
 ) -> dict[str, Any]:
     """
     執行 LibCST 分析以建構呼叫圖。
-    此函式現在接收一個已初始化的 FullRepoManager。
     """
     all_components: set[str] = set()
     full_docstring_map: dict[str, str] = {}
