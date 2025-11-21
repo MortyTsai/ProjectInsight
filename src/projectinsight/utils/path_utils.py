@@ -1,6 +1,7 @@
 # src/projectinsight/utils/path_utils.py
 """
 提供與專案路徑解析相關的通用工具函式。
+增強頂層套件偵測：現在支援識別根目錄下的單獨 .py 模組。
 """
 
 # 1. 標準庫導入
@@ -43,7 +44,7 @@ def find_project_root(marker: str = "pyproject.toml") -> Path:
 def find_top_level_packages(source_root: Path) -> list[str]:
     """
     掃描給定的原始碼根目錄，自動偵測所有頂層的 Python 套件或包含 Python 程式碼的目錄。
-    [修正 v2] 此函式現在能處理像 `docs_src` 這樣本身不是套件但包含子套件的目錄。
+    修正：現在會包含根目錄下的獨立 .py 檔案 (模組)。
 
     Args:
         source_root: 要掃描的 Python 原始碼根目錄。
@@ -58,8 +59,17 @@ def find_top_level_packages(source_root: Path) -> list[str]:
     top_level_items = []
     try:
         for item in source_root.iterdir():
-            if item.is_dir() and next(item.rglob("*.py"), None):
-                top_level_items.append(item.name)
+            if item.is_dir():
+                if next(item.rglob("*.py"), None):
+                    top_level_items.append(item.name)
+
+            elif (
+                item.is_file()
+                and item.suffix == ".py"
+                and item.name not in ("__init__.py", "setup.py", "conftest.py")
+            ):
+                top_level_items.append(item.stem)
+
     except OSError as e:
         logging.error(f"掃描頂層套件時發生檔案系統錯誤: {e}")
         return []
