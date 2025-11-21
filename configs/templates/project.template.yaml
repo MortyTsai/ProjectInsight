@@ -2,80 +2,104 @@
 # ======================================================================
 # ProjectInsight - 專案分析設定範本
 # ======================================================================
-# 說明:
-# 1. 這是 ProjectInsight 的一份完整功能設定檔範本，也是一份內嵌式的使用手冊。
-# 2. 將此檔案複製到 'configs/projects/' 目錄下並為您的專案重新命名。
-# 3. 大多數選項都有智慧預設值，您只需修改標有 [必要] 的部分即可快速開始。
+# [快速開始指南]
+# 1. 將此檔案複製到 'configs/projects/' 目錄下，並重新命名 (例如 my_project.yaml)。
+# 2. 修改 [Part 1] 中的 'target_project_path' 指向您的專案目錄。
+# 3. 直接執行分析！ProjectInsight 會自動偵測結構並在需要時引導您。
 # ======================================================================
 
-
 # ======================================================================
-# Part 1: 專案基礎設定 (Project Basics)
+# Part 1: 專案基礎設定 (Project Basics) - [唯一必填]
 # ======================================================================
-# 此區塊定義了被分析專案的基本資訊。
-# ----------------------------------------------------------------------
 
-# [必要] 要分析的目標專案的「根目錄」。
-# 可以是絕對路徑 (例如 "D:/MyProject") 或相對於本設定檔的相對路徑。
+# [必填] 目標專案的「根目錄」。
+# 支援絕對路徑 (例如 "D:/Work/MyProject") 或相對路徑。
 target_project_path: "../../../MyAwesomeProject"
 
-# [可選, 專家覆寫] 目標專案的根套件名稱。
-#
-# [!!] 參數教學 (V2.0+):
-#   - ProjectInsight 現在會自動偵測專案原始碼目錄下的所有「頂層套件/模組」。
-#   - 在大多數情況下，您「不需要」設定此參數。
-#   - 只有在以下情況下，您才需要手動指定此參數：
-#     1. 自動偵測因非標準的專案結構而失敗。
-#     2. 您希望將分析範圍「手動限制」在某個特定的子套件內。
-#
-# root_package_name: "my_awesome_package"
+# [可選] 輸出目錄。預設為 "../../output/[設定檔名稱]"。
+# output_dir: "../../output/my_awesome_project"
 
-# [可選] 生成報告與圖表的輸出目錄。
-# 預設值: "../../output/[專案設定檔名稱]"
-output_dir: "../../output/my_awesome_project"
-
-# [可選] 強制執行完整分析，即使專案體量過大也不會觸發互動式精靈。
-# 適用於自動化執行場景。
-# 預設值: false
-# force_analysis: true
+# [可選] 專案根套件名稱。
+# 系統會自動在 src/, lib/ 或根目錄下偵測。僅在自動偵測失敗時才需手動指定。
+# root_package_name: "my_package"
 
 
 # ======================================================================
-# Part 2: 分析類型與詳細配置 (Analysis Configuration)
+# Part 2: 分析類型 (Analysis Types)
 # ======================================================================
-# 此區塊用於選擇要執行的分析類型，並為每種分析提供詳細設定。
-# ----------------------------------------------------------------------
 
 analysis_types:
   # [核心] 高階組件互動圖。分析類別與公開函式之間的呼叫與語義關係。
   - "component_interaction"
-  # [實驗性] 概念流動圖。自動發現並追蹤專案中關鍵物件實例的流動。
-  - "auto_concept_flow"
-  # [實驗性] 動態行為圖。根據您定義的規則，識別基於字串或事件的動態行為模式。
-  - "dynamic_behavior"
 
-# [可選] `auto_concept_flow` 的詳細設定
-auto_concept_flow:
-  # 排除符合特定模式的變數，避免將日誌記錄器或版本號等無關變數視為核心概念。
-  exclude_patterns:
-    - "*_LOGGER"
-    - "*_VERSION"
+  # [進階] 概念流動圖 (自動追蹤核心物件的流動)。
+  # - "auto_concept_flow"
 
-# [可選] `dynamic_behavior` 的詳細設定
-dynamic_behavior_analysis:
-  # 定義圖中不同角色的名稱與顏色。
-  roles:
-    producer: { name: "生產者 (Producer)", color: "#FFDDC1" }
-    consumer: { name: "消費者 (Consumer)", color: "#C1E1FF" }
-  # 定義用於識別動態行為的規則列表。
-  rules: []
+  # [進階] 動態行為圖 (基於規則識別生產者/消費者模式)。
+  # - "dynamic_behavior"
 
 
 # ======================================================================
-# Part 3: 報告內容設定 (Report Settings)
+# Part 3: 視覺化與專家設定 (Visualization & Expert Mode)
+# ======================================================================
+# ProjectInsight 擁有強大的智慧預設值。
+# 以下設定僅供有特殊需求的專家使用，預設皆已註解。
+# ----------------------------------------------------------------------
+
+visualization:
+  component_interaction_graph:
+    # --- 基礎渲染設定 ---
+    layout_engine: "dot"  # 推薦: dot (層次), neato (力導向), fdp (叢集)
+    dpi: 200              # 輸出解析度
+    render_timeout: 120   # [V2.1] 渲染超時秒數。大型專案可調高至 300 或 600。
+
+    # --- [專家模式] 聚焦分析策略 ---
+    # 系統預設會分析全景。若專案過大，"智慧精靈" 會自動跳出並推薦入口點。
+    # 您也可以在此手動強制指定。
+    # focus:
+    #   entrypoints:
+    #     - "my_package.core.app.App"  # 手動指定入口點 FQN
+    #   initial_depth: 2               # 初始搜索深度
+    #   min_nodes: 10                  # 智慧深度調整的目標節點數
+    #   max_search_depth: 7            # 最大搜索深度限制
+    #
+    #   # [V2.2] 方向控制與智慧降級
+    #   direction: "both"              # 可選: "both" (雙向), "downstream" (僅向下), "upstream" (僅向上)
+    #   max_nodes_for_bidirectional: 500 # 當雙向分析節點超過此數，自動切換為單向以防崩潰
+    #   auto_downstream_fallback: true   # 是否啟用上述自動降級機制
+
+    # --- [專家模式] 節點過濾 ---
+    # filtering:
+    #   exclude_nodes:
+    #     - "*.tests.*"
+    #     - "*.migrations.*"
+
+    # --- [專家模式] 佈局微調 ---
+    # layout:
+    #   show_internal_calls: false       # 是否顯示同一組件內部的函式呼叫
+    #   min_component_size_to_render: 2  # 過濾掉小於此數量的孤立連通分量
+    #   stagger_groups: 3                # 階梯式佈局的寬度控制
+
+    # --- [專家模式] 語義連結樣式 ---
+    # semantic_analysis:
+    #   enabled: true
+    #   links:
+    #     registers:     { style: "dashed", color: "#1E90FF", label: "registers" }
+    #     inherits_from: { style: "dotted", color: "#32CD32", label: "inherits" }
+    #     decorates:     { style: "dashed", color: "#FF8C00", label: "decorates" }
+    #     proxies:       { style: "dashed", color: "#9932CC", label: "proxies", arrowhead: "tee" }
+    #     uses_strategy: { style: "bold",   color: "#FF69B4", label: "uses_strategy" }
+    #     depends_on:    { style: "dashed", color: "#DAA520", label: "depends_on" }
+
+  # --- 動態行為圖設定 ---
+  dynamic_behavior_graph:
+    layout_engine: "dot"
+    dpi: 200
+
+# ======================================================================
+# Part 4: 報告內容設定 (Report Settings)
 # ======================================================================
 report_settings:
-  # 檔案結構樹的過濾規則
   tree_view:
     exclude_dirs:
       - "__pycache__"
@@ -90,155 +114,64 @@ report_settings:
       - "*.egg-info"
       - "tests"
       - "docs"
+      - "site-packages"
     exclude_extensions:
-      - ".md"
-      - ".txt"
-      - ".json"
-      - ".lock"
+      - ".pyc"
+      - ".pyd"
+      - ".so"
+      - ".dll"
+      - ".exe"
+      - ".bin"
+      - ".pkl"
     exclude_files:
-      - "LICENSE"
-      - "README.md"
-      - ".*"
-  # 報告中包含的原始碼檔案類型
+      - ".DS_Store"
+      - "Thumbs.db"
   source_code:
     included_extensions:
       - ".py"
       - ".yaml"
       - ".toml"
-
-
-# ======================================================================
-# Part 4: 視覺化設定 (可選, 所有選項均有智慧預設值)
-# ======================================================================
-visualization:
-  component_interaction_graph:
-    layout_engine: "dot" # 可選 'dot', 'neato', 'sfdp' 等 Graphviz 引擎
-    dpi: 200 # 輸出圖片的解析度
-
-    # [專家模式] 大型專案分析策略
-    # ------------------------------------------------------------------
-    focus:
-      # [智慧化新功能] 智慧化深度調整
-      # ----------------------------------------------------------------
-      # 當啟用時，如果初始搜索（使用 initial_depth）產生的節點數少於 min_nodes，
-      # 系統將自動增加搜索深度，每次加 1，直到達到 min_nodes 或 max_search_depth。
-      # 這可以確保即使在呼叫鏈很長的框架中，也能生成一個有意義的圖。
-      #
-      # 預設值: true
-      enable_dynamic_depth: true
-      # 觸發動態增加深度的最小節點數。
-      # 預設值: 10
-      min_nodes: 10
-      # 智慧化搜索的最大深度限制，以防止圖變得過於龐大或陷入無限循環。
-      # 預設值: 7
-      max_search_depth: 7
-      # ----------------------------------------------------------------
-
-      # [必要] 一個或多個您想分析的核心組件的 FQN (完整路徑)。
-      # 可以由智慧推薦精靈自動填入。
-      entrypoints:
-        - "my_package.main.main_function"
-      # 初始搜索深度。如果啟用了智慧化深度調整，這將是起始深度。
-      # 預設值: 2
-      initial_depth: 2
-
-    # [專家模式] 節點過濾
-    # ------------------------------------------------------------------
-    filtering:
-      # 排除 FQN 符合萬用字元模式的節點。
-      exclude_nodes:
-        - "*tests*"
-        - "*migrations*"
-
-    # [專家模式] 佈局微調
-    # ------------------------------------------------------------------
-    layout:
-      # 是否顯示指向同一組件內部其他方法的呼叫。
-      show_internal_calls: true
-      # [新] 渲染連通分量的最小尺寸。
-      #
-      # [!!] 參數教學:
-      #   - 設為 2 (預設值)，可以過濾掉所有孤立的單節點雜訊。
-      #   - 設為 1，將會渲染所有節點，即使是孤島 (可能導致大型專案佈局混亂)。
-      #   - 設為 3 或更高，可以進一步聚焦於更複雜的組件群。
-      min_component_size_to_render: 2
-      # [新] 階梯式拓撲分組的「寬度」。
-      #
-      # [!!] 參數教學:
-      #   - 此參數控制在強制縱向佈局時，每個「階梯」可以容納多少個節點。
-      #   - 設為 1，將產生極致的單列縱向佈局（類似上一版的「拓撲脊柱」）。
-      #   - 設為 3 (預設值)，會產生每層最多 3 個節點的階梯式佈局，在縱向和橫向之間取得平衡。
-      #   - 數值越大，圖表越傾向於橫向擴展。
-      stagger_groups: 3
-
-    # [專家模式] 節點樣式
-    # ------------------------------------------------------------------
-    node_styles:
-      # 是否在節點中顯示函式/類別的 Docstring。
-      show_docstrings: true
-      title:
-        font_size: 11
-        path_color: "#555555"
-        main_color: "#000000"
-      docstring:
-        font_size: 9
-        color: "#333333"
-        spacing: 8
-
-    # [專家模式] 語義連結視覺化設定
-    # ------------------------------------------------------------------
-    semantic_analysis:
-      enabled: true
-      links:
-        registers:
-          style: "dashed"
-          color: "#1E90FF"
-          label: "registers"
-        inherits_from:
-          style: "dotted"
-          color: "#32CD32"
-          label: "inherits"
-        decorates:
-          style: "dashed"
-          color: "#FF8C00"
-          label: "decorates"
-        proxies:
-          style: "dashed"
-          color: "#9932CC"
-          label: "proxies"
-          arrowhead: "tee"
-        uses_strategy:
-          style: "bold"
-          color: "#FF69B4"
-          label: "uses_strategy"
-        depends_on:
-          style: "dashed"
-          color: "#DAA520" # GoldenRod color
-          label: "depends_on"
-
-  dynamic_behavior_graph:
-    layout_engine: "dot"
-    dpi: 200
-    node_styles:
-      show_docstrings: true
-      title:
-        font_size: 11
-        path_color: "#555555"
-        main_color: "#000000"
-      docstring:
-        font_size: 9
-        color: "#333333"
-        spacing: 8
+      - ".json"
 
 # ======================================================================
-# Part 5: 架構層級定義 (可選, 系統會自動發現)
+# Part 5: 進階分析規則 (Advanced Rules)
 # ======================================================================
-# 手動為專案的子套件/模組定義名稱和顏色，以覆蓋自動分配的顏色。
-# `(root)` 是一個特殊關鍵字，用於定義根套件本身的樣式。
-# ----------------------------------------------------------------------
+
+# [可選] 概念流動圖設定
+# auto_concept_flow:
+#   exclude_patterns:
+#     - "*_LOGGER"
+#     - "*_VERSION"
+
+# [可選] 動態行為分析規則 (範例)
+# dynamic_behavior_analysis:
+#   roles:
+#     producer: { name: "生產者", color: "#FFDDC1" }
+#     consumer: { name: "消費者", color: "#C1E1FF" }
+#   rules:
+#     - rule_name: "Task Queue Pattern"
+#       type: "producer_consumer"
+#       correlation_key: "task_name"
+#       producer:
+#         role: "producer"
+#         match_target: "dict_creation"
+#         key_argument: "task_type"
+#       consumer:
+#         role: "consumer"
+#         match_target: "function_entry"
+#         method_fqn: "my_app.worker.process_task"
+
+# ======================================================================
+# Part 6: 架構層級定義 (Architecture Layers)
+# ======================================================================
+# 系統會自動為頂層套件分配顏色。您可在此手動覆寫。
 # architecture_layers:
+#   (root):
+#     name: "專案根目錄"
+#     color: "#EAEAEA"
 #   core:
-#     color: "#FF0000"
-#   services:
-#     name: "核心業務服務層"
-#     color: "#D1FFC1"
+#     name: "核心模組"
+#     color: "#FFD700"
+#   utils:
+#     name: "工具函式"
+#     color: "#90EE90"
