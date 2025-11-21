@@ -21,6 +21,7 @@ from libcst.metadata import (
     ScopeProvider,
 )
 
+
 # 3. 本專案導入
 # (無)
 
@@ -694,21 +695,6 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
     def _check_dependency_injection(self, node: cst.FunctionDef):
         """訪問所有函式定義，檢查其參數是否有 Depends()。"""
         try:
-            is_endpoint = False
-            if not node.decorators:
-                return
-
-            for decorator in node.decorators:
-                decorator_node = decorator.decorator
-                if m.matches(decorator_node, m.Call(func=m.Attribute())):
-                    call_node = cast(cst.Call, decorator_node)
-                    attr_node = cast(cst.Attribute, call_node.func)
-                    if attr_node.attr.value in self.HTTP_METHODS:
-                        is_endpoint = True
-                        break
-            if not is_endpoint:
-                return
-
             endpoint_fqn = self._get_fqn_from_node(node.name)
             endpoint_component = self._resolve_to_component(endpoint_fqn)
             if not endpoint_component:
@@ -730,10 +716,10 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
 
 
 def analyze_semantic_links(
-    repo_manager: FullRepoManager,
-    pre_scan_results: dict[str, Any],
-    context_packages: list[str],
-    all_components: set[str],
+        repo_manager: FullRepoManager,
+        pre_scan_results: dict[str, Any],
+        context_packages: list[str],
+        all_components: set[str],
 ) -> dict[str, Any]:
     """
     執行所有靜態語義連結分析。
