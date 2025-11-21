@@ -21,7 +21,6 @@ from libcst.metadata import (
     ScopeProvider,
 )
 
-
 # 3. 本專案導入
 # (無)
 
