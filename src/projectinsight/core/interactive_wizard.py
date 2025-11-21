@@ -1,6 +1,7 @@
 # src/projectinsight/core/interactive_wizard.py
 """
 負責處理大型專案分析前的所有使用者互動與智慧推薦。
+演算法微調：針對 Pandas 等大型函式庫，新增「私有路徑抑制」與「裝飾器抑制」機制。
 """
 
 # 1. 標準庫導入
@@ -10,100 +11,160 @@ from pathlib import Path
 from typing import Any
 
 # 2. 第三方庫導入
-# (無)
+import networkx as nx
+
 # 3. 本專案導入
 from projectinsight.core.config_loader import ConfigLoader
-from projectinsight.intelligence.ecosystem_analyzer import EcosystemAnalyzer
-from projectinsight.intelligence.graph_analyzer import GraphAnalyzer
-from projectinsight.intelligence.heuristics_scorer import HeuristicsScorer
 
 
 class InteractiveWizard:
-    """一個處理大型專案互動式配置的類別。"""
+    """
+    一個基於圖論事實 (Graph-Based) 的互動式配置精靈。
+    它接收完整的組件互動圖資料，透過混合圖論指標識別架構中的核心入口點。
+    """
 
-    def __init__(self, config_path: Path, scan_results: dict[str, Any], project_root: Path):
+    def __init__(self, config_path: Path, project_root: Path):
         self.config_path = config_path
-        self.scan_results = scan_results
         self.project_root = project_root
         self.sorted_candidates: list[tuple[str, float]] = []
 
-    def prepare_recommendations(self):
+    def analyze_graph_and_recommend(self, graph_data: dict[str, Any], context_packages: list[str]):
         """
-        [新] 準備完整的候選者排序列表，但不立即顯示。
+        基於傳入的圖資料構建 NetworkX 圖，並計算混合中心性分數。
         """
-        pre_scan_results = self.scan_results["pre_scan_results"]
-        module_import_graph = self.scan_results["module_import_graph"]
-        definition_to_module_map = self.scan_results["definition_to_module_map"]
-        all_definitions = self.scan_results["all_definitions"]
+        logging.info("--- [Wizard] 正在基於真實呼叫圖進行拓撲分析 (PageRank + Out-Degree) ---")
 
-        scorer = HeuristicsScorer()
-        heuristic_scores = scorer.score(pre_scan_results, all_definitions)
-        rules = scorer.rules
-        weights = rules.get("weights", {})
-        entry_points_bonus = rules.get("entry_points_bonus", 150)
+        G = nx.DiGraph()
+        nodes = graph_data.get("nodes", [])
+        edges = graph_data.get("edges", [])
+        semantic_edges = graph_data.get("semantic_edges", [])
 
-        graph_analyzer = GraphAnalyzer(module_import_graph)
-        hits_scores = graph_analyzer.calculate_hits()
+        if not nodes:
+            logging.warning("[Wizard] 圖資料為空，無法進行推薦。")
+            return
 
-        eco_analyzer = EcosystemAnalyzer(self.project_root, module_import_graph, rules.get("frameworks", {}))
-        framework_bonus_scores = eco_analyzer.get_framework_bonus_scores()
-        standard_entrypoints = eco_analyzer.get_standard_entrypoints()
+        G.add_nodes_from(nodes)
 
-        combined_scores: dict[str, float] = {}
-        all_definition_fqns = set(heuristic_scores.keys()) | set(standard_entrypoints.keys())
+        for u, v in edges:
+            if u != v:
+                G.add_edge(u, v, weight=1.0)
 
-        for fqn in all_definition_fqns:
-            h_score = heuristic_scores.get(fqn, 0.0)
-            module_path = definition_to_module_map.get(fqn)
-            if not module_path:
+        for u, v, label in semantic_edges:
+            if u != v:
+                weight = 1.0
+                if label in ("registers", "uses_strategy"):
+                    weight = 1.5
+                elif label == "inherits_from":
+                    weight = 1.2
+                G.add_edge(u, v, weight=weight)
+
+        try:
+            pagerank_scores = nx.pagerank(G, alpha=0.85, weight="weight")
+        except nx.PowerIterationFailedConvergence:
+            logging.warning("[Wizard] PageRank 未收斂，使用度數中心性代替。")
+            pagerank_scores = nx.degree_centrality(G)
+
+        out_degree_scores = nx.out_degree_centrality(G)
+
+        final_scores: dict[str, float] = {}
+
+        max_pr = max(pagerank_scores.values()) if pagerank_scores else 1.0
+        max_od = max(out_degree_scores.values()) if out_degree_scores else 1.0
+
+        bonus_patterns = {
+            "*main*": 1.5,
+            "*app*": 1.5,
+            "*application*": 1.5,
+            "*api*": 1.3,
+            "*router*": 1.3,
+            "*server*": 1.3,
+            "*cli*": 1.3,
+            "*manage*": 1.3,
+            "*handler*": 1.3,
+            "*wsgi*": 1.3,
+            "*asgi*": 1.3,
+            "*core*": 1.2,
+            "*base*": 1.1,
+            "*model*": 1.1,
+            "*frame*": 1.2,
+            "*index*": 1.1,
+            "*session*": 1.1,
+            "*engine*": 1.1,
+        }
+
+        penalty_patterns = {
+            "*test*": 0.05,
+            "*docs*": 0.05,
+            "*example*": 0.1,
+            "*scripts*": 0.1,
+            "*utils*": 0.5,
+            "*common*": 0.5,
+            "*helper*": 0.5,
+            "*__init__": 0.2,
+            "*types*": 0.3,
+            "*exceptions*": 0.3,
+            "*error*": 0.3,
+            "*property*": 0.5,
+            "*filters*": 0.5,
+            "*admin*": 0.8,
+            "*decorator*": 0.2,
+            "*validator*": 0.3,
+            "*compat*": 0.3,
+        }
+
+        for node in G.nodes():
+            is_internal = any(node.startswith(pkg) for pkg in context_packages)
+            if not is_internal:
                 continue
 
-            propagated_centrality_score = 0.0
-            path_parts = module_path.split(".")
-            decay_factor = 0.85
+            parts = node.split(".")
+            has_private_part = False
+            for part in parts:
+                if part.startswith("_") and not part.startswith("__"):
+                    has_private_part = True
+                    break
 
-            for i in range(len(path_parts), 0, -1):
-                current_path = ".".join(path_parts[:i])
-                if current_path in hits_scores:
-                    hub_score = hits_scores[current_path].get("hub", 0.0)
-                    authority_score = hits_scores[current_path].get("authority", 0.0)
-                    current_centrality = (hub_score * 0.5 + authority_score * 1.5) * 100
-                    depth = len(path_parts) - i
-                    decayed_score = current_centrality * (decay_factor**depth)
-                    if decayed_score > propagated_centrality_score:
-                        propagated_centrality_score = decayed_score
+            pr_norm = pagerank_scores.get(node, 0) / max_pr
+            od_norm = out_degree_scores.get(node, 0) / max_od
+            base_score = (pr_norm * 0.4 + od_norm * 0.6) * 100
 
-            framework_score = 0.0
-            for pattern, bonus in framework_bonus_scores.items():
-                if fnmatch.fnmatch(fqn, pattern):
-                    framework_score += bonus
+            multiplier = 1.0
+            for pattern, bonus in bonus_patterns.items():
+                if fnmatch.fnmatch(node.lower(), pattern):
+                    multiplier *= bonus
 
-            entry_point_score = 0.0
-            if fqn in standard_entrypoints:
-                entry_point_score = entry_points_bonus
+            for pattern, penalty in penalty_patterns.items():
+                if fnmatch.fnmatch(node.lower(), pattern):
+                    multiplier *= penalty
 
-            total_score = (
-                (h_score * weights.get("heuristic_score", 1.0))
-                + (propagated_centrality_score * weights.get("centrality_score", 1.0))
-                + (framework_score * weights.get("entry_point_score", 1.0))
-                + (entry_point_score * weights.get("entry_point_score", 1.0))
-            )
-            combined_scores[fqn] = total_score
+            if has_private_part:
+                multiplier *= 0.3
 
-        self.sorted_candidates = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
+            short_name = node.split(".")[-1]
+            if short_name and short_name[0].isupper() and "_" not in short_name:
+                multiplier *= 1.2
 
-        logging.debug("--- [除錯探針] 智慧推薦引擎候選者 Top 20 ---")
-        for i, (fqn, score) in enumerate(self.sorted_candidates[:20]):
+            final_score = base_score * multiplier
+
+            if G.degree(node) == 0:
+                final_score *= 0.1
+
+            final_scores[node] = final_score
+
+        self.sorted_candidates = sorted(final_scores.items(), key=lambda item: item[1], reverse=True)
+
+        logging.debug("--- [Wizard] Top 10 推薦候選者 (已過濾外部依賴) ---")
+        for i, (fqn, score) in enumerate(self.sorted_candidates[:10]):
             logging.debug(f"  {i + 1}. {fqn} (Score: {score:.2f})")
-        logging.debug("-------------------------------------------------")
 
-    def run(self, definition_count: int, failed_attempts: list[str] | None = None) -> str:
-        """
-        執行互動式精靈，並回傳使用者的最終決定 ('proceed' 或 'exit')。
-        [改造] 現在可以接收一個失敗嘗試的列表。
-        """
-        if not self.sorted_candidates:
-            self.prepare_recommendations()
+    def run(
+        self,
+        graph_data: dict[str, Any],
+        context_packages: list[str],
+        failed_attempts: list[str] | None = None,
+    ) -> str:
+        """執行互動式精靈。"""
+        self.analyze_graph_and_recommend(graph_data, context_packages)
 
         if failed_attempts:
             print("\n" + "-" * 60)
@@ -112,29 +173,37 @@ class InteractiveWizard:
             print("-" * 60)
 
         filtered_candidates = [cand for cand in self.sorted_candidates if cand[0] not in (failed_attempts or [])]
-        recommendations = filtered_candidates[:5]
+        recommendations = [cand for cand in filtered_candidates if cand[1] > 0][:5]
 
-        self._display_menu(definition_count, recommendations)
+        node_count = len(graph_data.get("nodes", []))
+        self._display_menu(node_count, recommendations)
+
         updates, action = self._get_user_choice(recommendations)
         if updates:
             ConfigLoader.update_config_file(self.config_path, updates)
         return action
 
     @staticmethod
-    def _display_menu(definition_count: int, recommendations: list[tuple[str, float]]):
+    def _display_menu(node_count: int, recommendations: list[tuple[str, float]]):
         """顯示互動式選單給使用者。"""
         print("\n" + "=" * 60)
-        logging.info(f"ProjectInsight 偵測到這是一個大型專案 (約 {definition_count} 個組件)。")
-        logging.warning("直接進行完整分析可能會非常緩慢或失敗。")
+        logging.info(f"ProjectInsight 構建了一個包含 {node_count} 個節點的全景圖。")
+        logging.warning("圖表過於龐大，直接渲染將導致視覺雜訊。")
         print("-" * 60)
-        print("ProjectInsight 為您推薦了以下幾個可能的分析入口點：")
+        print("基於混合圖論分析 (PageRank + Out-Degree)，我們推薦以下核心入口點：")
+
+        if not recommendations:
+            print("  (無強烈推薦的入口點，請嘗試手動選擇)")
+
         for i, (fqn, score) in enumerate(recommendations):
-            print(f"  {i + 1}. {fqn} (推薦分數: {score:.0f})")
+            print(f"  {i + 1}. {fqn} (推薦指數: {score:.1f})")
+
         print("\n您可以選擇一個推薦的入口點，或選擇其他選項：")
-        print(f"  {len(recommendations) + 1}. [手動聚焦] 手動輸入您想分析的核心模組。")
-        print(f"  {len(recommendations) + 2}. [過濾分析] 手動指定您想排除的無關模組。")
-        print(f"  {len(recommendations) + 3}. [強制執行] 忽略建議，繼續執行完整分析 (不推薦)。")
-        print(f"  {len(recommendations) + 4}. [退出] 終止分析。")
+        base_idx = len(recommendations)
+        print(f"  {base_idx + 1}. [手動聚焦] 手動輸入您想分析的核心模組。")
+        print(f"  {base_idx + 2}. [過濾分析] 手動指定您想排除的無關模組。")
+        print(f"  {base_idx + 3}. [強制執行] 忽略建議，繼續執行完整分析 (不推薦)。")
+        print(f"  {base_idx + 4}. [退出] 終止分析。")
         print("=" * 60)
 
     @staticmethod
@@ -142,16 +211,19 @@ class InteractiveWizard:
         """獲取並處理使用者的選擇。"""
         updates: dict[str, Any] = {}
         action = "proceed"
+        max_choice = len(recommendations) + 4
+
         while True:
             try:
-                choice_str = input(f"請輸入您的選擇 (1-{len(recommendations) + 4}): ").strip()
+                choice_str = input(f"請輸入您的選擇 (1-{max_choice}): ").strip()
                 choice = int(choice_str)
-                if 1 <= choice <= len(recommendations) + 4:
+                if 1 <= choice <= max_choice:
                     break
                 else:
                     print("無效的選擇，請重新輸入。")
             except ValueError:
                 print("無效的輸入，請輸入數字。")
+
         if 1 <= choice <= len(recommendations):
             selected_fqn = recommendations[choice - 1][0]
             updates = {
