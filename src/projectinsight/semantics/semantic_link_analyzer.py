@@ -1,9 +1,7 @@
 # src/projectinsight/semantics/semantic_link_analyzer.py
 """
 靜態語義連結分析器。
-
-此模組負責分析「控制反轉 (IoC)」模式，例如集合註冊、繼承、策略模式等，
-以補充純靜態呼叫圖無法捕捉到的架構意圖。
+修正：在繼承分析中應用全域雜訊過濾，移除 logging.Filter 等標準庫繼承雜訊。
 """
 
 # 1. 標準庫導入
@@ -22,16 +20,12 @@ from libcst.metadata import (
 )
 
 # 3. 本專案導入
-# (無)
+from projectinsight.parsers.component_parser import _is_noise, DECORATOR_IGNORE_PREFIXES
 
 
 class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
     """
     一個 LibCST 訪問者，用於發現在類別級別的「集合聲明」模式。
-
-    匹配:
-    class MyRegistrar:
-        my_collection = [RegistreeA, RegistreeB]
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
@@ -44,20 +38,13 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
     def _is_internal_fqn(self, fqn: str) -> bool:
-        """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_component(self, fqn: str | None) -> str | None:
-        """
-        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
-        但會過濾掉代表區域變數的 `<locals>` 雜訊。
-        """
         if not fqn:
             return None
-
         if ".<locals>." in fqn:
             return None
-
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -94,9 +81,6 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
 
     @m.visit(m.Assign(value=m.OneOf(m.List(), m.Tuple())))
     def visit_collection_assign(self, node: cst.Assign):
-        """
-        處理 `class MyRegistrar: my_list = [RegistreeA, RegistreeB]` 模式。
-        """
         try:
             registrar_component = self._get_enclosing_class_component(node)
             if not registrar_component:
@@ -119,7 +103,6 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
                     edge = (registrar_component, registree_component, "registers")
                     if edge not in self.semantic_edges:
                         self.semantic_edges.add(edge)
-                        logging.debug(f"  [語義連結] 發現: {registrar_component} --registers--> {registree_component}")
         except Exception as e:
             logging.debug(f"處理 'collection assign' 語義連結時出錯: {e}", exc_info=True)
 
@@ -127,8 +110,6 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
 class _InheritanceVisitor(m.MatcherDecoratableVisitor):
     """
     一個 LibCST 訪問者，用於發現通用的「類別繼承」模式。
-
-    匹配: class Child(Parent1, Parent2): ...
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
@@ -141,20 +122,13 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
     def _is_internal_fqn(self, fqn: str) -> bool:
-        """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_component(self, fqn: str | None) -> str | None:
-        """
-        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
-        但會過濾掉代表區域變數的 `<locals>` 雜訊。
-        """
         if not fqn:
             return None
-
         if ".<locals>." in fqn:
             return None
-
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -163,6 +137,10 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
+
+        if _is_noise(fqn):
+            return None
+
         return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
@@ -176,9 +154,6 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
 
     @m.visit(m.ClassDef())
     def visit_class_def(self, node: cst.ClassDef):
-        """
-        處理 `class Child(Parent1, Parent2): ...` 模式。
-        """
         try:
             child_fqn = self._get_fqn_from_node(node.name)
             child_component = self._resolve_to_component(child_fqn)
@@ -199,7 +174,6 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
                     edge = (child_component, parent_component, "inherits_from")
                     if edge not in self.semantic_edges:
                         self.semantic_edges.add(edge)
-                        logging.debug(f"  [語義連結] 發現: {child_component} --inherits_from--> {parent_component}")
         except Exception as e:
             logging.debug(f"處理 'inherits_from' 語義連結時出錯: {e}", exc_info=True)
 
@@ -207,10 +181,6 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
 class _DecoratorVisitor(m.MatcherDecoratableVisitor):
     """
     一個 LibCST 訪問者，用於發現通用的「裝飾器」模式。
-
-    匹配:
-    @Registrar.some_decorator
-    def my_registree_func(): ...
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
@@ -223,20 +193,13 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
     def _is_internal_fqn(self, fqn: str) -> bool:
-        """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_component(self, fqn: str | None) -> str | None:
-        """
-        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
-        但會過濾掉代表區域變數的 `<locals>` 雜訊。
-        """
         if not fqn:
             return None
-
         if ".<locals>." in fqn:
             return None
-
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -245,6 +208,10 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             potential_component = ".".join(parts[:i])
             if potential_component in self.all_components:
                 return potential_component
+
+        if _is_noise(fqn, DECORATOR_IGNORE_PREFIXES):
+            return None
+
         return fqn
 
     def _get_fqn_from_node(self, node: cst.CSTNode) -> str | None:
@@ -258,9 +225,6 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
 
     @m.visit(m.Decorator())
     def visit_decorator(self, node: cst.Decorator):
-        """
-        處理 `@Decorator` 模式。
-        """
         try:
             parent_def = self.get_metadata(ParentNodeProvider, node)
             if not isinstance(parent_def, (cst.FunctionDef, cst.ClassDef)):
@@ -294,7 +258,6 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
                 edge = (parent_component, child_component, "decorates")
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
-                    logging.debug(f"  [語義連結] 發現: {parent_component} --decorates--> {child_component}")
 
         except Exception as e:
             logging.debug(f"處理 'decorates' 語義連結時出錯: {e}", exc_info=True)
@@ -302,9 +265,7 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
 
 class _ProxyVisitor(m.MatcherDecoratableVisitor):
     """
-    一個 LibCST 訪問者，用於發現通用的「代理」模式，例如 Flask/Werkzeug 的 LocalProxy。
-
-    匹配: `X = LocalProxy(...)` 或 `X: T = LocalProxy(...)`
+    一個 LibCST 訪問者，用於發現通用的「代理」模式。
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider)
@@ -317,16 +278,10 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
     def _resolve_to_component(self, fqn: str | None) -> str | None:
-        """
-        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
-        但會過濾掉代表區域變數的 `<locals>` 雜訊。
-        """
         if not fqn:
             return None
-
         if ".<locals>." in fqn:
             return None
-
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -347,10 +302,6 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
         return None
 
     def _is_proxy_call(self, call_func_node: cst.CSTNode) -> bool:
-        """
-        使用 ScopeProvider 檢查節點是否為從 'werkzeug.local' 導入的
-        'LocalProxy' 或 'LocalStack'。
-        """
         if not isinstance(call_func_node, (cst.Name, cst.Attribute)):
             return False
 
@@ -395,9 +346,6 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
 
     @m.visit(m.OneOf(m.Assign(value=m.Call()), m.AnnAssign(value=m.Call())))
     def visit_proxy_assignment(self, node: cst.Assign | cst.AnnAssign):
-        """
-        處理 `X = SomeFunc(Y)` 或 `X: T = SomeFunc(Y)` 模式。
-        """
         try:
             target_node: cst.CSTNode
             call_node: cst.Call
@@ -461,7 +409,6 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
                 edge = (proxy_component, target_component, "proxies")
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
-                    logging.debug(f"  [語義連結] 發現: {proxy_component} --proxies--> {target_component}")
 
         except Exception as e:
             logging.debug(f"處理 'proxies' 語義連結時出錯: {e}", exc_info=True)
@@ -470,10 +417,6 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
 class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
     """
     一個 LibCST 訪問者，用於發現函式或模組級別的「策略模式」註冊。
-
-    採用兩階段狀態追蹤：
-    1. 訪問賦值語句，識別出哪些變數是「策略列表」。
-    2. 訪問 `.append()` 呼叫，為已識別的策略列表添加新的策略。
     """
 
     METADATA_DEPENDENCIES = (ScopeProvider, FullyQualifiedNameProvider, ParentNodeProvider)
@@ -487,20 +430,13 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
         self.strategy_lists: dict[str, str] = {}
 
     def _is_internal_fqn(self, fqn: str) -> bool:
-        """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages)
 
     def _resolve_to_component(self, fqn: str | None) -> str | None:
-        """
-        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
-        但會過濾掉代表區域變數的 `<locals>` 雜訊。
-        """
         if not fqn:
             return None
-
         if ".<locals>." in fqn:
             return None
-
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -537,7 +473,6 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
 
     @m.visit(m.Assign(value=m.OneOf(m.List(), m.Tuple())))
     def visit_strategy_list_assignment(self, node: cst.Assign):
-        """階段一：識別策略列表的初始賦值。"""
         try:
             consumer_component = self._get_enclosing_function_component(node)
             if not consumer_component:
@@ -563,20 +498,17 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
                     return
 
                 self.strategy_lists[list_variable_fqn] = consumer_component
-                logging.debug(f"  [策略模式] 發現策略列表: '{list_variable_fqn}'，消費者: '{consumer_component}'")
 
                 for strategy_component in strategy_components_in_list:
                     if consumer_component != strategy_component:
                         edge = (consumer_component, strategy_component, "uses_strategy")
                         if edge not in self.semantic_edges:
                             self.semantic_edges.add(edge)
-                            logging.debug(f"  [語義連結] {consumer_component} --uses_strategy--> {strategy_component}")
         except Exception as e:
             logging.debug(f"處理 'strategy list assignment' 時出錯: {e}", exc_info=True)
 
     @m.visit(m.Call(func=m.Attribute(attr=m.Name("append"))))
     def visit_strategy_append(self, node: cst.Call):
-        """階段二：識別對已知策略列表的 .append() 呼叫。"""
         try:
             attribute_node = node.func
             if not isinstance(attribute_node, cst.Attribute):
@@ -601,9 +533,6 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
                 edge = (consumer_component, strategy_component, "uses_strategy")
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
-                    logging.debug(
-                        f"  [語義連結] {consumer_component} --uses_strategy--> {strategy_component} (via append)"
-                    )
         except Exception as e:
             logging.debug(f"處理 'strategy append' 時出錯: {e}", exc_info=True)
 
@@ -624,20 +553,13 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
         self.semantic_edges: set[tuple[str, str, str]] = set()
 
     def _is_internal_fqn(self, fqn: str) -> bool:
-        """檢查 FQN 是否屬於專案的內部上下文。"""
         return any(fqn.startswith(f"{pkg}.") or fqn == pkg for pkg in self.context_packages) or "docs_src" in fqn
 
     def _resolve_to_component(self, fqn: str | None) -> str | None:
-        """
-        將 FQN 解析為其高階組件。如果不是已知組件，則直接回傳 FQN，
-        但會過濾掉代表區域變數的 `<locals>` 雜訊。
-        """
         if not fqn:
             return None
-
         if ".<locals>." in fqn:
             return None
-
         path = fqn.split(".<locals>.", 1)[0]
         if path in self.all_components:
             return path
@@ -660,7 +582,6 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
         return None
 
     def _find_dependency_in_node(self, node: cst.CSTNode) -> cst.Call | None:
-        """遞迴地在節點（特別是 Annotation）中尋找 Depends() 呼叫。"""
         if self.matches(node, m.Call(func=m.Name("Depends"))):
             return cast(cst.Call, node)
 
@@ -673,7 +594,6 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
         return None
 
     def _process_dependency(self, depends_call: cst.Call, endpoint_component: str):
-        """處理一個已找到的 Depends() 呼叫節點。"""
         if not depends_call.args:
             return
 
@@ -688,11 +608,9 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
             edge = (endpoint_component, provider_component, "depends_on")
             if edge not in self.semantic_edges:
                 self.semantic_edges.add(edge)
-                logging.debug(f"  [語義連結] 發現: {endpoint_component} --depends_on--> {provider_component}")
 
     @m.visit(m.FunctionDef())
     def _check_dependency_injection(self, node: cst.FunctionDef):
-        """訪問所有函式定義，檢查其參數是否有 Depends()。"""
         try:
             endpoint_fqn = self._get_fqn_from_node(node.name)
             endpoint_component = self._resolve_to_component(endpoint_fqn)
