@@ -1,6 +1,7 @@
 # src/projectinsight/renderers/component_renderer.py
 """
 封裝高階組件互動圖的 Graphviz 渲染邏輯。
+支援可配置的渲染超時 (render_timeout)。
 """
 
 # 1. 標準庫導入
@@ -22,7 +23,6 @@ from projectinsight.utils.color_utils import get_analogous_dark_color
 def _get_node_layer_info(node_name: str, layer_info: dict[str, dict[str, str]]) -> tuple[str, str | None]:
     """
     根據節點 FQN，從 layer_info 中找到最精確匹配的架構層級鍵和顏色。
-    [V2 - 已修正] 此版本直接使用 layer_key 作為 FQN 前綴進行匹配，解決了雙重前綴問題。
     """
     best_match_len = 0
     default_color = "#E6F7FF"
@@ -59,7 +59,6 @@ def _create_html_label(
 ) -> str:
     """
     根據節點資訊和樣式設定，生成三段式 FQN 樣式的 HTML-like Label。
-    樣式: package.path.<I>module_name</I>.<B>component_name</B>
     """
     title_style = styles.get("title", {})
     title_font_size = title_style.get("font_size", 11)
@@ -135,6 +134,8 @@ def render_component_graph(
     min_component_size = layout_config.get("min_component_size_to_render", 2)
     stagger_groups = layout_config.get("stagger_groups", 3)
     dpi = comp_graph_config.get("dpi", "200")
+
+    render_timeout = comp_graph_config.get("render_timeout", 120)
 
     dot = graphviz.Digraph("ComponentInteractionGraph")
     font_face = 'FACE="Microsoft YaHei"'
@@ -361,19 +362,26 @@ def render_component_graph(
         dot.edge(edge[0], edge[1])
 
     dot_source = dot.source
-    logging.info(f"準備將組件互動圖渲染至: {output_path} (DPI: {dpi})")
+    logging.info(f"準備將組件互動圖渲染至: {output_path} (DPI: {dpi}, Timeout: {render_timeout}s)")
     command = [layout_engine, f"-T{output_path.suffix[1:]}", f"-Gdpi={dpi}"]
     try:
         process = subprocess.run(
-            command, input=dot_source.encode("utf-8"), capture_output=True, check=True, timeout=120
+            command, input=dot_source.encode("utf-8"), capture_output=True, check=True, timeout=render_timeout
         )
         with open(output_path, "wb") as f:
             f.write(process.stdout)
         logging.info(f"圖表已成功儲存至: {output_path}")
+    except subprocess.TimeoutExpired:
+        logging.error(f"Graphviz 渲染超時 (超過 {render_timeout} 秒)。")
+        logging.info(
+            "建議：嘗試減少 'initial_depth'，啟用 'auto_downstream_fallback'，或在設定中增加 'render_timeout'。"
+        )
     except subprocess.CalledProcessError as e:
         logging.error(f"Graphviz ({layout_engine}) 執行時返回錯誤。")
         error_message = e.stderr.decode("utf-8", errors="ignore")
         logging.error(f"Graphviz 錯誤訊息:\n{error_message}")
+    except FileNotFoundError:
+        logging.error(f"Graphviz 執行檔 '{layout_engine}' 未找到。請確保 Graphviz 已安裝並已加入系統 PATH。")
     except Exception as e:
         logging.error(f"渲染圖表時發生錯誤: {e}")
 
