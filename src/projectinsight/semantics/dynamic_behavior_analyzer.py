@@ -1,6 +1,7 @@
 # src/projectinsight/semantics/dynamic_behavior_analyzer.py
 """
 提供基於 LibCST Matchers 的動態行為分析功能。
+修正：放寬函式呼叫匹配邏輯，支援區域變數的 Duck Typing 匹配。
 """
 
 import logging
@@ -108,6 +109,8 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
             return DynamicBehaviorVisitor._build_dict_matcher(config)
         if match_target == "function_entry":
             return DynamicBehaviorVisitor._build_func_entry_matcher(config)
+        if match_target == "call":
+            return DynamicBehaviorVisitor._build_call_matcher(config)
         return None
 
     @staticmethod
@@ -145,11 +148,29 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
             )
         )
 
+    @staticmethod
+    def _build_call_matcher(config: dict[str, Any]) -> BaseMatcherNode | None:
+        """
+        建構函式呼叫匹配器。
+        採用 Duck Typing 策略：只匹配方法名稱，不強制檢查 FQN，以支援區域變數呼叫。
+        """
+        method_fqn = config.get("method_fqn")
+        if not method_fqn:
+            return None
+
+        simple_method_name = method_fqn.split(".")[-1]
+
+        return m.Call(
+            func=m.Attribute(
+                attr=m.Name(value=simple_method_name)
+            )
+        )
+
 
 def analyze_dynamic_behavior(
-    py_files: list[Path],
-    rules: list[dict[str, Any]],
-    project_root: Path,
+        py_files: list[Path],
+        rules: list[dict[str, Any]],
+        project_root: Path,
 ) -> dict[str, Any]:
     all_findings: list[dict[str, Any]] = []
     logging.info("--- 開始執行分析: 'dynamic_behavior' ---")
@@ -192,7 +213,6 @@ def analyze_dynamic_behavior(
         findings_by_rule_key[key][f["role"]].append(f)
 
     for _key, groups in findings_by_rule_key.items():
-        # 未來可以擴展此處以支援更複雜的多對多連結
         producers = groups.get("producer", [])
         consumers = groups.get("consumer", [])
         dispatchers = groups.get("dispatcher", [])
