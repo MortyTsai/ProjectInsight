@@ -1,13 +1,14 @@
 # src/projectinsight/parsers/component_parser.py
 """
 提供基於 AST 和 LibCST 的 Python 原始碼組件互動解析功能。
-修正：微調 libcst.matchers 過濾規則，移除結尾點以確保模組本身也能被過濾。
 """
 
 # 1. 標準庫導入
 import ast
 import fnmatch
+import hashlib
 import logging
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from libcst.metadata import (
 )
 
 # 3. 本專案導入
-# (無)
+# (無 - 避免循環導入，CacheManager 將以 Any 類型傳遞)
 
 # --- 全域雜訊過濾設定 ---
 
@@ -32,34 +33,65 @@ from libcst.metadata import (
 GLOBAL_IGNORE_PREFIXES = (
     # Python 內建
     "builtins.",
-
     # 標準庫 - 核心與工具
-    "typing.", "collections.", "functools.", "itertools.", "operator.",
-    "contextlib.", "enum.", "abc.", "types.", "copy.", "weakref.",
-    "dataclasses.", "colorsys.", "importlib.",
-
+    "typing.",
+    "collections.",
+    "functools.",
+    "itertools.",
+    "operator.",
+    "contextlib.",
+    "enum.",
+    "abc.",
+    "types.",
+    "copy.",
+    "weakref.",
+    "dataclasses.",
+    "colorsys.",
+    "importlib.",
     # 標準庫 - 系統與執行時
-    "sys.", "warnings.", "inspect.", "traceback.", "gc.", "atexit.",
-
+    "sys.",
+    "warnings.",
+    "inspect.",
+    "traceback.",
+    "gc.",
+    "atexit.",
     # 標準庫 - 數學與科學
-    "math.", "cmath.", "decimal.", "fractions.", "random.", "statistics.", "numbers.",
-
+    "math.",
+    "cmath.",
+    "decimal.",
+    "fractions.",
+    "random.",
+    "statistics.",
+    "numbers.",
     # 標準庫 - 文字處理
-    "string.", "re.", "difflib.", "textwrap.", "unicodedata.", "struct.", "codecs.",
-
+    "string.",
+    "re.",
+    "difflib.",
+    "textwrap.",
+    "unicodedata.",
+    "struct.",
+    "codecs.",
     # 標準庫 - 時間與日期
-    "datetime.", "time.", "calendar.", "zoneinfo.",
-
+    "datetime.",
+    "time.",
+    "calendar.",
+    "zoneinfo.",
     # 標準庫 - 檔案與路徑
-    "pathlib.", "os.path.", "shutil.", "glob.", "fnmatch.",
+    "pathlib.",
+    "os.path.",
+    "shutil.",
+    "glob.",
+    "fnmatch.",
     "os.",
-
     # 標準庫 - 日誌與除錯
-    "logging.", "pprint.", "pdb.",
-
+    "logging.",
+    "pprint.",
+    "pdb.",
     # 常見相容性庫
-    "six.", "typing_extensions.", "attr.", "attrs.",
-
+    "six.",
+    "typing_extensions.",
+    "attr.",
+    "attrs.",
     # 特定框架的 DSL 雜訊 (移除結尾點以匹配模組本身)
     "libcst.matchers",
 )
@@ -83,10 +115,7 @@ def _is_noise(fqn: str, extra_prefixes: tuple[str, ...] = ()) -> bool:
     if fqn.startswith(GLOBAL_IGNORE_PREFIXES):
         return True
 
-    if extra_prefixes and fqn.startswith(extra_prefixes):
-        return True
-
-    return False
+    return bool(extra_prefixes and fqn.startswith(extra_prefixes))
 
 
 class CodeVisitor(ast.NodeVisitor):
@@ -137,10 +166,10 @@ class CodeVisitor(ast.NodeVisitor):
             left = node.test.left
             comparator = node.test.comparators[0]
             if (
-                    isinstance(left, ast.Name)
-                    and left.id == "__name__"
-                    and isinstance(comparator, ast.Constant)
-                    and comparator.value == "__main__"
+                isinstance(left, ast.Name)
+                and left.id == "__name__"
+                and isinstance(comparator, ast.Constant)
+                and comparator.value == "__main__"
             ):
                 self.has_main_block = True
         self.generic_visit(node)
@@ -342,13 +371,13 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
     )
 
     def __init__(
-            self,
-            wrapper: MetadataWrapper,
-            context_packages: list[str],
-            all_components: set[str],
-            module_path: str,
-            alias_map: dict[str, str],
-            file_path: str,
+        self,
+        wrapper: MetadataWrapper,
+        context_packages: list[str],
+        all_components: set[str],
+        module_path: str,
+        alias_map: dict[str, str],
+        file_path: str,
     ):
         super().__init__()
         self.wrapper = wrapper
@@ -436,14 +465,16 @@ class _CallGraphVisitor(m.MatcherDecoratableVisitor):
 
 
 def full_libcst_analysis(
-        repo_manager: FullRepoManager,
-        context_packages: list[str],
-        pre_scan_results: dict[str, Any],
-        initial_definition_map: dict[str, str],
-        alias_exclude_patterns: list[str],
+    repo_manager: FullRepoManager,
+    context_packages: list[str],
+    pre_scan_results: dict[str, Any],
+    initial_definition_map: dict[str, str],
+    alias_exclude_patterns: list[str],
+    cache_manager: Any | None = None,
 ) -> dict[str, Any]:
     """
     執行 LibCST 分析以建構呼叫圖。
+    支援增量分析：若提供 cache_manager，將嘗試使用快取結果。
     """
     all_components: set[str] = set()
     full_docstring_map: dict[str, str] = {}
@@ -461,37 +492,75 @@ def full_libcst_analysis(
         except Exception as e:
             logging.debug(f"無法為 {visitor.file_path} 解析模組級 docstring: {e}")
 
-    logging.info("--- [階段 1/2] 開始掃描全域別名 (使用 LibCST) ---")
+    logging.info("--- [階段 1/2] 開始掃描全域別名 (使用 LibCST + 增量快取) ---")
     alias_map: dict[str, str] = {}
+
+    file_alias_cache_buffer: dict[str, dict[str, str]] = {}
+
     for file_path_str in pre_scan_results:
-        try:
-            wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-            alias_visitor = _AliasVisitor(wrapper, context_packages, alias_exclude_patterns)
-            wrapper.visit(alias_visitor)
-            alias_map.update(alias_visitor.alias_map)
-        except Exception as e:
-            logging.warning(f"掃描別名時無法分析檔案 '{file_path_str}': {e}")
+        file_path_obj = Path(file_path_str)
+
+        cached_data = cache_manager.get(file_path_obj) if cache_manager else None
+
+        if cached_data and "aliases" in cached_data:
+            alias_map.update(cached_data["aliases"])
+            file_alias_cache_buffer[file_path_str] = cached_data["aliases"]
+        else:
+            try:
+                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+                alias_visitor = _AliasVisitor(wrapper, context_packages, alias_exclude_patterns)
+                wrapper.visit(alias_visitor)
+
+                alias_map.update(alias_visitor.alias_map)
+                file_alias_cache_buffer[file_path_str] = alias_visitor.alias_map
+            except Exception as e:
+                logging.warning(f"掃描別名時無法分析檔案 '{file_path_str}': {e}")
+                file_alias_cache_buffer[file_path_str] = {}
+
     logging.info(f"--- 別名掃描完成，發現 {len(alias_map)} 個相關的全域別名 ---")
 
-    logging.info("--- [階段 2/2] 開始建立正規化呼叫圖 (使用 LibCST) ---")
+    current_alias_map_hash = hashlib.md5(pickle.dumps(sorted(alias_map.items()))).hexdigest()
+
+    logging.info("--- [階段 2/2] 開始建立正規化呼叫圖 (使用 LibCST + 增量快取) ---")
+
     for file_path_str, scan_data in pre_scan_results.items():
-        try:
-            module_path = scan_data["visitor"].module_path
-            wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
-            call_visitor = _CallGraphVisitor(
-                wrapper,
-                context_packages,
-                all_components,
-                module_path,
-                alias_map,
-                file_path_str,
-            )
-            wrapper.visit(call_visitor)
-            call_graph.update(call_visitor.found_edges)
-        except cst.ParserSyntaxError as e:
-            logging.error(f"無法解析檔案 (語法錯誤) '{file_path_str}': {e.message}")
-        except Exception as e:
-            logging.warning(f"使用 LibCST 分析檔案 '{file_path_str}' 時失敗: {e}", exc_info=True)
+        file_path_obj = Path(file_path_str)
+
+        cached_data = cache_manager.get(file_path_obj) if cache_manager else None
+
+        is_cache_valid = (
+            cached_data and "edges" in cached_data and cached_data.get("alias_map_hash") == current_alias_map_hash
+        )
+
+        if is_cache_valid:
+            call_graph.update(cached_data["edges"])
+        else:
+            try:
+                module_path = scan_data["visitor"].module_path
+                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+                call_visitor = _CallGraphVisitor(
+                    wrapper,
+                    context_packages,
+                    all_components,
+                    module_path,
+                    alias_map,
+                    file_path_str,
+                )
+                wrapper.visit(call_visitor)
+                call_graph.update(call_visitor.found_edges)
+
+                if cache_manager:
+                    new_cache_entry = {
+                        "aliases": file_alias_cache_buffer.get(file_path_str, {}),
+                        "edges": call_visitor.found_edges,
+                        "alias_map_hash": current_alias_map_hash,
+                    }
+                    cache_manager.update(file_path_obj, new_cache_entry)
+
+            except cst.ParserSyntaxError as e:
+                logging.error(f"無法解析檔案 (語法錯誤) '{file_path_str}': {e.message}")
+            except Exception as e:
+                logging.warning(f"使用 LibCST 分析檔案 '{file_path_str}' 時失敗: {e}", exc_info=True)
 
     logging.info(f"完整 LibCST 呼叫圖分析完成：找到 {len(all_components)} 個組件，{len(call_graph)} 條呼叫邊。")
     return {
