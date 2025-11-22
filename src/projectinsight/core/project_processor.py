@@ -9,11 +9,14 @@ ProjectInsight 的核心處理引擎。
 3.  協調執行「專案體量預評估」。
 4.  建立並管理 LibCST 的 `FullRepoManager`，為所有解析器提供統一的語法樹上下文。
 5.  優先執行完整的 LibCST 解析與語義分析，建立事實基礎。
-6.  於真實的圖資料判斷是否啟動「互動式精靈」。
-7.  根據設定，依次調用 `builders`, `renderers`, 和 `reporters` 完成報告生成。
+6.  管理增量分析快取 (CacheManager)，加速重複分析。
+7.  於真實的圖資料判斷是否啟動「互動式精靈」。
+8.  根據設定，依次調用 `builders`, `renderers`, 和 `reporters` 完成報告生成。
 """
 
 # 1. 標準庫導入
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -33,6 +36,7 @@ from libcst.metadata import (
 from projectinsight.builders.component_builder import build_component_graph_data
 from projectinsight.builders.concept_flow_builder import build_concept_flow_graph_data
 from projectinsight.builders.dynamic_behavior_builder import build_dynamic_behavior_graph_data
+from projectinsight.core.cache_manager import CacheManager
 from projectinsight.core.config_loader import ConfigLoader
 from projectinsight.core.interactive_wizard import InteractiveWizard
 from projectinsight.parsers import component_parser, concept_flow_analyzer, seed_discoverer
@@ -64,6 +68,22 @@ class ProjectProcessor:
         self.config_loader = ConfigLoader(config_path)
         self.config = self.config_loader.config
 
+    def _compute_config_fingerprint(self) -> str:
+        """
+        計算影響解析結果的設定指紋。
+        如果這些設定發生變化，快取應視為失效。
+        """
+        relevant_config = {
+            "parser_settings": self.config.get("parser_settings"),
+            "root_package_name": self.config.get("root_package_name"),
+        }
+        try:
+            serialized = json.dumps(relevant_config, sort_keys=True, default=str)
+            return hashlib.md5(serialized.encode("utf-8")).hexdigest()
+        except Exception as e:
+            logging.warning(f"計算設定指紋時發生錯誤: {e}，將使用隨機指紋強制快取失效。")
+            return os.urandom(8).hex()
+
     def run(self):
         """執行完整的專案處理流程。"""
         if not self.config:
@@ -84,6 +104,11 @@ class ProjectProcessor:
 
         logging.info(f"專案報告根目錄: {target_project_root}")
         logging.info(f"Python 原始碼分析根目錄: {python_source_root}")
+
+        config_fingerprint = self._compute_config_fingerprint()
+        cache_dir = output_dir / ".cache"
+        cache_manager = CacheManager(target_project_root, cache_dir, config_fingerprint)
+        cache_manager.load()
 
         context_packages: list[str]
         root_package_name_override = self.config.get("root_package_name")
@@ -134,7 +159,7 @@ class ProjectProcessor:
             logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}", exc_info=True)
             return
 
-        logging.info("--- [Phase 3] 執行完整程式碼解析 (LibCST) ---")
+        logging.info("--- [Phase 3] 執行完整程式碼解析 (LibCST + Incremental Cache) ---")
         parser_settings = self.config.get("parser_settings", {})
         alias_resolution_settings = parser_settings.get("alias_resolution", {})
 
@@ -144,6 +169,7 @@ class ProjectProcessor:
             pre_scan_results=scan_results["pre_scan_results"],
             initial_definition_map=scan_results["definition_to_module_map"],
             alias_exclude_patterns=alias_resolution_settings.get("exclude_patterns", []),
+            cache_manager=cache_manager,
         )
 
         logging.info("--- [Phase 4] 執行靜態語義連結分析 ---")
@@ -152,7 +178,11 @@ class ProjectProcessor:
             pre_scan_results=scan_results["pre_scan_results"],
             context_packages=context_packages,
             all_components=parser_results.get("components", set()),
+            cache_manager=cache_manager,
         )
+
+        cache_manager.prune(py_files)
+        cache_manager.save()
 
         full_graph_data = build_component_graph_data(
             call_graph=parser_results.get("call_graph", set()),
