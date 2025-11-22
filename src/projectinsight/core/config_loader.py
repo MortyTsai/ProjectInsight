@@ -1,11 +1,11 @@
 # src/projectinsight/core/config_loader.py
 """
 負責載入、合併、發現和更新所有與專案分析相關的設定。
-新增渲染超時 (render_timeout) 與聚焦分析自動降級 (auto_downstream_fallback) 的預設值。
 """
 
 # 1. 標準庫導入
 import colorsys
+import copy
 import logging
 import random
 from pathlib import Path
@@ -130,10 +130,10 @@ class ConfigLoader:
     def _process_config(self):
         """處理載入後的設定，進行合併和自動發現。"""
         user_parser_config = self.config.get("parser_settings", {})
-        self.config["parser_settings"] = self._merge_configs(DEFAULT_PARSER_CONFIG.copy(), user_parser_config)
+        self.config["parser_settings"] = self._merge_configs(copy.deepcopy(DEFAULT_PARSER_CONFIG), user_parser_config)
 
         user_vis_config = self.config.get("visualization", {})
-        self.config["visualization"] = self._merge_configs(DEFAULT_VIS_CONFIG.copy(), user_vis_config)
+        self.config["visualization"] = self._merge_configs(copy.deepcopy(DEFAULT_VIS_CONFIG), user_vis_config)
 
         target_project_path_str = self.config.get("target_project_path")
         if not target_project_path_str:
