@@ -1,11 +1,6 @@
 # src/projectinsight/core/cache_manager.py
 """
 負責管理增量分析的快取機制。
-
-核心職責：
-1. 計算檔案與設定的雜湊值 (Fingerprinting)。
-2. 管理快取的生命週期 (載入、更新、清理、儲存)。
-3. 確保快取的環境解耦 (使用相對路徑) 與原子寫入 (Atomic Writes)。
 """
 
 # 1. 標準庫導入
@@ -24,7 +19,7 @@ from typing import Any
 # (無)
 
 # 快取版本號：當解析邏輯發生重大變更時，應升級此版本號以強制快取失效。
-CACHE_VERSION = "1.0.0"
+CACHE_VERSION = "1.1.3"
 CACHE_FILENAME = "analysis_cache.pkl"
 
 
@@ -38,11 +33,13 @@ class CacheManager:
         初始化 CacheManager。
 
         Args:
-            project_root: 專案根目錄 (用於計算相對路徑)。
+            project_root: 專案根目錄。
             cache_dir: 快取存放目錄。
-            config_fingerprint: 當前設定檔的雜湊指紋 (若設定變更，快取應失效)。
+            config_fingerprint: 當前設定檔的雜湊指紋。
         """
-        self.project_root = project_root
+        self.project_root_str = str(project_root.resolve())
+        self.project_root = project_root.resolve()
+
         self.cache_dir = cache_dir
         self.config_fingerprint = config_fingerprint
         self.cache_file_path = cache_dir / CACHE_FILENAME
@@ -54,7 +51,6 @@ class CacheManager:
     def load(self):
         """
         從磁碟載入快取。
-        如果版本不匹配或設定指紋不同，則視為無效快取並重置。
         """
         if not self.cache_file_path.exists():
             logging.debug("未發現現有快取，將執行全量分析。")
@@ -86,27 +82,35 @@ class CacheManager:
             logging.error(f"載入快取時發生未預期的錯誤: {e}")
             self.cache_data = {}
 
+    def _get_relative_key(self, file_path: Path) -> str | None:
+        """
+        使用 os.path.relpath 計算相對路徑鍵，並轉為 POSIX 格式。
+        這能解決 Windows 上 pathlib.relative_to 的大小寫敏感問題。
+        """
+        try:
+            resolved_path_str = str(file_path.resolve())
+            rel_path = os.path.relpath(resolved_path_str, self.project_root_str)
+
+            if rel_path.startswith(".."):
+                return None
+
+            return Path(rel_path).as_posix()
+        except ValueError:
+            return None
+
     def get(self, file_path: Path) -> Any | None:
         """
         獲取指定檔案的快取資料。
-        會自動檢查檔案內容雜湊是否匹配。
-
-        Args:
-            file_path: 檔案的絕對路徑。
-
-        Returns:
-            如果命中且有效，回傳快取資料 (Any)；否則回傳 None。
         """
-        try:
-            relative_path = str(file_path.relative_to(self.project_root))
-        except ValueError:
+        relative_path = self._get_relative_key(file_path)
+        if not relative_path:
             return None
 
         entry = self.cache_data.get(relative_path)
         if not entry:
             return None
 
-        current_hash = self._compute_file_hash(file_path)
+        current_hash = self._compute_file_hash(file_path.resolve())
         if entry.get("hash") != current_hash:
             return None
 
@@ -115,17 +119,12 @@ class CacheManager:
     def update(self, file_path: Path, data: Any):
         """
         更新指定檔案的快取資料。
-
-        Args:
-            file_path: 檔案的絕對路徑。
-            data: 要快取的分析結果資料。
         """
-        try:
-            relative_path = str(file_path.relative_to(self.project_root))
-        except ValueError:
+        relative_path = self._get_relative_key(file_path)
+        if not relative_path:
             return
 
-        file_hash = self._compute_file_hash(file_path)
+        file_hash = self._compute_file_hash(file_path.resolve())
         self.cache_data[relative_path] = {
             "hash": file_hash,
             "data": data,
@@ -135,17 +134,14 @@ class CacheManager:
     def prune(self, current_files: list[Path]):
         """
         清理已不存在於當前檔案列表中的快取條目。
-
-        Args:
-            current_files: 當前專案中所有有效的檔案路徑列表。
         """
-        try:
-            current_relative_paths = {str(p.relative_to(self.project_root)) for p in current_files}
-        except ValueError:
-            logging.warning("清理快取時遇到路徑解析錯誤，跳過清理步驟。")
-            return
+        current_keys = set()
+        for p in current_files:
+            key = self._get_relative_key(p)
+            if key:
+                current_keys.add(key)
 
-        keys_to_remove = [k for k in self.cache_data if k not in current_relative_paths]
+        keys_to_remove = [k for k in self.cache_data if k not in current_keys]
         if keys_to_remove:
             for k in keys_to_remove:
                 del self.cache_data[k]
@@ -155,7 +151,6 @@ class CacheManager:
     def save(self):
         """
         將快取寫入磁碟。
-        使用原子寫入 (Atomic Write) 以防止寫入中斷導致損毀。
         """
         if not self.dirty:
             logging.debug("快取未變更，跳過寫入。")
