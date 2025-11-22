@@ -71,12 +71,13 @@ def _generate_adjacency_list_text(graph_data: dict[str, Any], context_packages: 
     """
     將圖形資料轉換為最高效的、帶有節點類型標籤的鄰接串列 Markdown 格式。
     """
+    nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
     semantic_edges = graph_data.get("semantic_edges", [])
     high_level_components = graph_data.get("high_level_components", set())
 
     adjacency_list = defaultdict(list)
-    all_nodes = set()
+    all_nodes = set(nodes)
 
     def get_node_tag(fqn: str) -> str:
         """根據節點 FQN 返回其類型標籤。"""
@@ -104,16 +105,19 @@ def _generate_adjacency_list_text(graph_data: dict[str, Any], context_packages: 
 
     text_parts = ["<details>\n<summary>點擊展開/摺疊鄰接串列</summary>\n"]
     text_parts.append("```markdown")
-    for node in sorted(adjacency_list.keys()):
+    for node in sorted(all_nodes):
         text_parts.append(f"- **{tagged_node_map[node]}**:")
-        for edge_str in sorted(adjacency_list[node]):
-            parts = edge_str.split(": ", 1)
-            if len(parts) == 2:
-                relation, target_node = parts
-                tagged_target = tagged_node_map.get(target_node, target_node)
-                text_parts.append(f"  {relation}: {tagged_target}")
-            else:
-                text_parts.append(f"  {edge_str}")
+        if node in adjacency_list:
+            for edge_str in sorted(adjacency_list[node]):
+                parts = edge_str.split(": ", 1)
+                if len(parts) == 2:
+                    relation, target_node = parts
+                    tagged_target = tagged_node_map.get(target_node, target_node)
+                    text_parts.append(f"  {relation}: {tagged_target}")
+                else:
+                    text_parts.append(f"  {edge_str}")
+        else:
+            pass
 
     text_parts.append("```\n</details>\n")
     return text_parts
