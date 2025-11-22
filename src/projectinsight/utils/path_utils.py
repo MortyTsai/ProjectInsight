@@ -64,9 +64,7 @@ def find_top_level_packages(source_root: Path) -> list[str]:
                     top_level_items.append(item.name)
 
             elif (
-                item.is_file()
-                and item.suffix == ".py"
-                and item.name not in ("__init__.py", "setup.py", "conftest.py")
+                item.is_file() and item.suffix == ".py" and item.name not in ("__init__.py", "setup.py", "conftest.py")
             ):
                 top_level_items.append(item.stem)
 

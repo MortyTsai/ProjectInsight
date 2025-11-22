@@ -160,17 +160,13 @@ class DynamicBehaviorVisitor(m.MatcherDecoratableVisitor):
 
         simple_method_name = method_fqn.split(".")[-1]
 
-        return m.Call(
-            func=m.Attribute(
-                attr=m.Name(value=simple_method_name)
-            )
-        )
+        return m.Call(func=m.Attribute(attr=m.Name(value=simple_method_name)))
 
 
 def analyze_dynamic_behavior(
-        py_files: list[Path],
-        rules: list[dict[str, Any]],
-        project_root: Path,
+    py_files: list[Path],
+    rules: list[dict[str, Any]],
+    project_root: Path,
 ) -> dict[str, Any]:
     all_findings: list[dict[str, Any]] = []
     logging.info("--- 開始執行分析: 'dynamic_behavior' ---")
