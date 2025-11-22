@@ -255,8 +255,10 @@ def quick_ast_scan(project_path: Path, py_files: list[Path], context_packages: l
             definition_to_module_map.update(visitor.definition_to_module_map)
             all_definitions.update(visitor.definitions)
 
+        except SyntaxError as e:
+            logging.warning(f"無法解析檔案 (語法錯誤) '{file_path}': {e}")
         except Exception as e:
-            logging.debug(f"快速掃描時無法分析檔案 {file_path}: {e}")
+            logging.warning(f"快速掃描時無法分析檔案 '{file_path}': {e}")
 
     logging.info(f"快速 AST 掃描完成：找到 {len(py_files)} 個檔案, {total_loc} 行程式碼, {total_definitions} 個定義。")
     return {
