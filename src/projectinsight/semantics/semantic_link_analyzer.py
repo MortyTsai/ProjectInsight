@@ -5,6 +5,7 @@
 
 # 1. 標準庫導入
 import logging
+import traceback
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -20,7 +21,8 @@ from libcst.metadata import (
 )
 
 # 3. 本專案導入
-from projectinsight.parsers.component_parser import DECORATOR_IGNORE_PREFIXES, _is_noise
+from projectinsight.core.parallel_manager import ParallelManager
+from projectinsight.utils.parser_utils import DECORATOR_IGNORE_PREFIXES, is_noise
 
 
 class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
@@ -60,8 +62,8 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
             fqns = self.get_metadata(FullyQualifiedNameProvider, node)
             if fqns:
                 return next(iter(fqns)).name
-        except Exception as e:
-            logging.debug(f"無法獲取節點 FQN: {e}")
+        except Exception:
+            pass
         return None
 
     def _get_enclosing_class_component(self, node: cst.CSTNode) -> str | None:
@@ -103,8 +105,8 @@ class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
                     edge = (registrar_component, registree_component, "registers")
                     if edge not in self.semantic_edges:
                         self.semantic_edges.add(edge)
-        except Exception as e:
-            logging.debug(f"處理 'collection assign' 語義連結時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
 
 
 class _InheritanceVisitor(m.MatcherDecoratableVisitor):
@@ -138,7 +140,7 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
             if potential_component in self.all_components:
                 return potential_component
 
-        if _is_noise(fqn):
+        if is_noise(fqn):
             return None
 
         return fqn
@@ -148,8 +150,8 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
             fqns = self.get_metadata(FullyQualifiedNameProvider, node)
             if fqns:
                 return next(iter(fqns)).name
-        except Exception as e:
-            logging.debug(f"無法獲取節點 FQN: {e}")
+        except Exception:
+            pass
         return None
 
     @m.visit(m.ClassDef())
@@ -174,8 +176,8 @@ class _InheritanceVisitor(m.MatcherDecoratableVisitor):
                     edge = (child_component, parent_component, "inherits_from")
                     if edge not in self.semantic_edges:
                         self.semantic_edges.add(edge)
-        except Exception as e:
-            logging.debug(f"處理 'inherits_from' 語義連結時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
 
 
 class _DecoratorVisitor(m.MatcherDecoratableVisitor):
@@ -209,7 +211,7 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             if potential_component in self.all_components:
                 return potential_component
 
-        if _is_noise(fqn, DECORATOR_IGNORE_PREFIXES):
+        if is_noise(fqn, DECORATOR_IGNORE_PREFIXES):
             return None
 
         return fqn
@@ -219,8 +221,8 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
             fqns = self.get_metadata(FullyQualifiedNameProvider, node)
             if fqns:
                 return next(iter(fqns)).name
-        except Exception as e:
-            logging.debug(f"無法獲取節點 FQN: {e}")
+        except Exception:
+            pass
         return None
 
     @m.visit(m.Decorator())
@@ -259,8 +261,8 @@ class _DecoratorVisitor(m.MatcherDecoratableVisitor):
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
 
-        except Exception as e:
-            logging.debug(f"處理 'decorates' 語義連結時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
 
 
 class _ProxyVisitor(m.MatcherDecoratableVisitor):
@@ -297,8 +299,8 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
             fqns = self.get_metadata(FullyQualifiedNameProvider, node)
             if fqns:
                 return next(iter(fqns)).name
-        except Exception as e:
-            logging.debug(f"無法獲取節點 FQN: {e}")
+        except Exception:
+            pass
         return None
 
     def _is_proxy_call(self, call_func_node: cst.CSTNode) -> bool:
@@ -340,8 +342,7 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
                         return True
             return False
 
-        except Exception as e:
-            logging.debug(f"ScopeProvider 追蹤導入時出錯: {e}")
+        except Exception:
             return False
 
     @m.visit(m.OneOf(m.Assign(value=m.Call()), m.AnnAssign(value=m.Call())))
@@ -410,8 +411,8 @@ class _ProxyVisitor(m.MatcherDecoratableVisitor):
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
 
-        except Exception as e:
-            logging.debug(f"處理 'proxies' 語義連結時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
 
 
 class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
@@ -452,8 +453,8 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
             fqns = self.get_metadata(FullyQualifiedNameProvider, node)
             if fqns:
                 return next(iter(fqns)).name
-        except Exception as e:
-            logging.debug(f"無法獲取節點 FQN: {e}")
+        except Exception:
+            pass
         return None
 
     def _get_enclosing_function_component(self, node: cst.CSTNode) -> str | None:
@@ -504,8 +505,8 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
                         edge = (consumer_component, strategy_component, "uses_strategy")
                         if edge not in self.semantic_edges:
                             self.semantic_edges.add(edge)
-        except Exception as e:
-            logging.debug(f"處理 'strategy list assignment' 時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
 
     @m.visit(m.Call(func=m.Attribute(attr=m.Name("append"))))
     def visit_strategy_append(self, node: cst.Call):
@@ -533,8 +534,8 @@ class _StrategyRegistrationVisitor(m.MatcherDecoratableVisitor):
                 edge = (consumer_component, strategy_component, "uses_strategy")
                 if edge not in self.semantic_edges:
                     self.semantic_edges.add(edge)
-        except Exception as e:
-            logging.debug(f"處理 'strategy append' 時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
 
 
 class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
@@ -577,8 +578,8 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
             fqns = self.get_metadata(FullyQualifiedNameProvider, node)
             if fqns:
                 return next(iter(fqns)).name
-        except Exception as e:
-            logging.debug(f"無法獲取節點 FQN: {e}")
+        except Exception:
+            pass
         return None
 
     def _find_dependency_in_node(self, node: cst.CSTNode) -> cst.Call | None:
@@ -628,8 +629,47 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
                     if dependency:
                         self._process_dependency(dependency, endpoint_component)
 
-        except Exception as e:
-            logging.debug(f"處理 'depends_on' 語義連結時出錯: {e}", exc_info=True)
+        except Exception:
+            pass
+
+
+def _worker_analyze_semantic_links(args: tuple[str, dict[str, Any]]) -> set[tuple[str, str, str]]:
+    """
+    [Worker] 執行單一檔案的語義連結分析。
+    """
+    file_path_str, context = args
+    context_packages = context.get("context_packages", [])
+    all_components = context.get("all_components", set())
+    project_root = context.get("project_root")
+
+    try:
+        repo_manager = FullRepoManager(
+            project_root,
+            [file_path_str],
+            {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider},
+        )
+        wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+
+        visitors = [
+            _CollectionRegistrationVisitor(wrapper, context_packages, all_components),
+            _InheritanceVisitor(wrapper, context_packages, all_components),
+            _DecoratorVisitor(wrapper, context_packages, all_components),
+            _ProxyVisitor(wrapper, context_packages, all_components),
+            _StrategyRegistrationVisitor(wrapper, context_packages, all_components),
+            _DependencyInjectionVisitor(wrapper, context_packages, all_components),
+        ]
+
+        file_semantic_edges = set()
+        for visitor in visitors:
+            wrapper.visit(visitor)
+            file_semantic_edges.update(visitor.semantic_edges)
+
+        return file_semantic_edges
+
+    except Exception as e:
+        logging.error(f"Worker (Semantic Analysis) 失敗於 {file_path_str}: {e}")
+        logging.debug(traceback.format_exc())
+        return set()
 
 
 def analyze_semantic_links(
@@ -638,47 +678,52 @@ def analyze_semantic_links(
     context_packages: list[str],
     all_components: set[str],
     cache_manager: Any | None = None,
+    project_root: str | None = None,
 ) -> dict[str, Any]:
     """
     執行所有靜態語義連結分析。
-    支援增量分析：若提供 cache_manager，將嘗試使用快取結果。
     """
     all_semantic_edges: set[tuple[str, str, str]] = set()
 
+    files_to_process: list[str] = []
+    files_using_cache: list[str] = []
+
     for file_path_str in pre_scan_results:
         file_path_obj = Path(file_path_str)
-
         cached_data = cache_manager.get(file_path_obj) if cache_manager else None
 
         if cached_data and "semantic_edges" in cached_data:
             all_semantic_edges.update(cached_data["semantic_edges"])
+            files_using_cache.append(file_path_str)
         else:
-            try:
-                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+            files_to_process.append(file_path_str)
 
-                visitors = [
-                    _CollectionRegistrationVisitor(wrapper, context_packages, all_components),
-                    _InheritanceVisitor(wrapper, context_packages, all_components),
-                    _DecoratorVisitor(wrapper, context_packages, all_components),
-                    _ProxyVisitor(wrapper, context_packages, all_components),
-                    _StrategyRegistrationVisitor(wrapper, context_packages, all_components),
-                    _DependencyInjectionVisitor(wrapper, context_packages, all_components),
-                ]
+    if files_to_process:
+        logging.info(f"  - 快取命中: {len(files_using_cache)} 檔")
+        logging.info(f"  - 需解析: {len(files_to_process)} 檔")
 
-                file_semantic_edges = set()
-                for visitor in visitors:
-                    wrapper.visit(visitor)
-                    file_semantic_edges.update(visitor.semantic_edges)
+        pm = ParallelManager()
+        global_context = {
+            "context_packages": context_packages,
+            "all_components": all_components,
+            "project_root": project_root,
+        }
 
-                all_semantic_edges.update(file_semantic_edges)
+        results = pm.execute_map_reduce(
+            task_func=_worker_analyze_semantic_links,
+            items=files_to_process,
+            global_context=global_context,
+            chunksize=5,
+        )
 
-                if cache_manager:
-                    current_cache_entry = cached_data if cached_data else {}
-                    current_cache_entry["semantic_edges"] = file_semantic_edges
-                    cache_manager.update(file_path_obj, current_cache_entry)
+        for file_path_str, edges in zip(files_to_process, results, strict=False):
+            all_semantic_edges.update(edges)
 
-            except Exception as e:
-                logging.warning(f"分析語義連結時無法分析檔案 '{file_path_str}': {e}")
+            if cache_manager:
+                file_path_obj = Path(file_path_str)
+                current_entry = cache_manager.get(file_path_obj) or {}
+                current_entry["semantic_edges"] = edges
+                cache_manager.update(file_path_obj, current_entry)
 
     logging.info(f"--- 語義連結分析完成，發現 {len(all_semantic_edges)} 條連結 ---")
 
