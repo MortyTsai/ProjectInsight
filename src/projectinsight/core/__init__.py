@@ -8,10 +8,12 @@ ProjectInsight 的核心協調器套件。
 
 from .config_loader import ConfigLoader
 from .interactive_wizard import InteractiveWizard
+from .parallel_manager import ParallelManager
 from .project_processor import ProjectProcessor
 
 __all__ = [
     "ConfigLoader",
     "InteractiveWizard",
+    "ParallelManager",
     "ProjectProcessor",
 ]
