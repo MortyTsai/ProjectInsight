@@ -1,17 +1,6 @@
 # src/projectinsight/core/project_processor.py
 """
 ProjectInsight 的核心處理引擎。
-
-此模組包含 `ProjectProcessor` 類別，作為整個專案分析流程的總指揮。
-它負責以下核心職責：
-1.  載入並解析專案設定檔。
-2.  準備並驗證所有必要的路徑。
-3.  協調執行「專案體量預評估」。
-4.  建立並管理 LibCST 的 `FullRepoManager`，為所有解析器提供統一的語法樹上下文。
-5.  優先執行完整的 LibCST 解析與語義分析，建立事實基礎。
-6.  管理增量分析快取 (CacheManager)，加速重複分析。
-7.  於真實的圖資料判斷是否啟動「互動式精靈」。
-8.  根據設定，依次調用 `builders`, `renderers`, 和 `reporters` 完成報告生成。
 """
 
 # 1. 標準庫導入
@@ -24,14 +13,7 @@ from pathlib import Path
 from typing import Any
 
 # 2. 第三方庫導入
-from libcst.metadata import (
-    FullRepoManager,
-    FullyQualifiedNameProvider,
-    ParentNodeProvider,
-    PositionProvider,
-    ScopeProvider,
-)
-
+# (無 - 移除了 libcst 的直接依賴，因為主程序不再負責解析)
 # 3. 本專案導入
 from projectinsight.builders.component_builder import build_component_graph_data
 from projectinsight.builders.concept_flow_builder import build_concept_flow_graph_data
@@ -143,25 +125,18 @@ class ProjectProcessor:
             except ValueError:
                 continue
         py_files = sorted(py_files_in_context)
-        py_files_abs_str = [str(p.resolve()) for p in py_files]
         logging.info(f"在解析上下文中找到 {len(py_files)} 個 Python 檔案進行分析。")
 
         logging.info("--- [Phase 1] 執行快速 AST 掃描 ---")
         scan_results = component_parser.quick_ast_scan(python_source_root, py_files, context_packages)
 
-        logging.info("--- [Phase 2] 初始化 LibCST FullRepoManager ---")
-        providers = {FullyQualifiedNameProvider, ScopeProvider, ParentNodeProvider, PositionProvider}
-        try:
-            repo_manager = FullRepoManager(str(python_source_root.resolve()), py_files_abs_str, providers)
-            repo_manager.resolve_cache()
-            logging.info("LibCST 快取解析完成。")
-        except Exception as e:
-            logging.error(f"初始化 LibCST FullRepoManager 時發生嚴重錯誤: {e}", exc_info=True)
-            return
+        repo_manager = None
 
-        logging.info("--- [Phase 3] 執行完整程式碼解析 (LibCST + Incremental Cache) ---")
+        logging.info("--- [Phase 2 & 3] 執行完整程式碼解析 (Parallel LibCST + Incremental Cache) ---")
         parser_settings = self.config.get("parser_settings", {})
         alias_resolution_settings = parser_settings.get("alias_resolution", {})
+
+        project_root_str = str(python_source_root.resolve())
 
         parser_results = component_parser.full_libcst_analysis(
             repo_manager=repo_manager,
@@ -170,15 +145,17 @@ class ProjectProcessor:
             initial_definition_map=scan_results["definition_to_module_map"],
             alias_exclude_patterns=alias_resolution_settings.get("exclude_patterns", []),
             cache_manager=cache_manager,
+            project_root=project_root_str,
         )
 
-        logging.info("--- [Phase 4] 執行靜態語義連結分析 ---")
+        logging.info("--- [Phase 4] 執行靜態語義連結分析 (Parallel) ---")
         semantic_results = semantic_link_analyzer.analyze_semantic_links(
             repo_manager=repo_manager,
             pre_scan_results=scan_results["pre_scan_results"],
             context_packages=context_packages,
             all_components=parser_results.get("components", set()),
             cache_manager=cache_manager,
+            project_root=project_root_str,
         )
 
         cache_manager.prune(py_files)
