@@ -1,11 +1,11 @@
 # src/projectinsight/semantics/semantic_link_analyzer.py
 """
 靜態語義連結分析器。
-修正：在繼承分析中應用全域雜訊過濾，移除 logging.Filter 等標準庫繼承雜訊。
 """
 
 # 1. 標準庫導入
 import logging
+from pathlib import Path
 from typing import Any, ClassVar, cast
 
 # 2. 第三方庫導入
@@ -20,7 +20,7 @@ from libcst.metadata import (
 )
 
 # 3. 本專案導入
-from projectinsight.parsers.component_parser import _is_noise, DECORATOR_IGNORE_PREFIXES
+from projectinsight.parsers.component_parser import DECORATOR_IGNORE_PREFIXES, _is_noise
 
 
 class _CollectionRegistrationVisitor(m.MatcherDecoratableVisitor):
@@ -633,35 +633,52 @@ class _DependencyInjectionVisitor(m.MatcherDecoratableVisitor):
 
 
 def analyze_semantic_links(
-        repo_manager: FullRepoManager,
-        pre_scan_results: dict[str, Any],
-        context_packages: list[str],
-        all_components: set[str],
+    repo_manager: FullRepoManager,
+    pre_scan_results: dict[str, Any],
+    context_packages: list[str],
+    all_components: set[str],
+    cache_manager: Any | None = None,
 ) -> dict[str, Any]:
     """
     執行所有靜態語義連結分析。
+    支援增量分析：若提供 cache_manager，將嘗試使用快取結果。
     """
     all_semantic_edges: set[tuple[str, str, str]] = set()
 
     for file_path_str in pre_scan_results:
-        try:
-            wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
+        file_path_obj = Path(file_path_str)
 
-            visitors = [
-                _CollectionRegistrationVisitor(wrapper, context_packages, all_components),
-                _InheritanceVisitor(wrapper, context_packages, all_components),
-                _DecoratorVisitor(wrapper, context_packages, all_components),
-                _ProxyVisitor(wrapper, context_packages, all_components),
-                _StrategyRegistrationVisitor(wrapper, context_packages, all_components),
-                _DependencyInjectionVisitor(wrapper, context_packages, all_components),
-            ]
+        cached_data = cache_manager.get(file_path_obj) if cache_manager else None
 
-            for visitor in visitors:
-                wrapper.visit(visitor)
-                all_semantic_edges.update(visitor.semantic_edges)
+        if cached_data and "semantic_edges" in cached_data:
+            all_semantic_edges.update(cached_data["semantic_edges"])
+        else:
+            try:
+                wrapper = repo_manager.get_metadata_wrapper_for_path(file_path_str)
 
-        except Exception as e:
-            logging.warning(f"分析語義連結時無法分析檔案 '{file_path_str}': {e}")
+                visitors = [
+                    _CollectionRegistrationVisitor(wrapper, context_packages, all_components),
+                    _InheritanceVisitor(wrapper, context_packages, all_components),
+                    _DecoratorVisitor(wrapper, context_packages, all_components),
+                    _ProxyVisitor(wrapper, context_packages, all_components),
+                    _StrategyRegistrationVisitor(wrapper, context_packages, all_components),
+                    _DependencyInjectionVisitor(wrapper, context_packages, all_components),
+                ]
+
+                file_semantic_edges = set()
+                for visitor in visitors:
+                    wrapper.visit(visitor)
+                    file_semantic_edges.update(visitor.semantic_edges)
+
+                all_semantic_edges.update(file_semantic_edges)
+
+                if cache_manager:
+                    current_cache_entry = cached_data if cached_data else {}
+                    current_cache_entry["semantic_edges"] = file_semantic_edges
+                    cache_manager.update(file_path_obj, current_cache_entry)
+
+            except Exception as e:
+                logging.warning(f"分析語義連結時無法分析檔案 '{file_path_str}': {e}")
 
     logging.info(f"--- 語義連結分析完成，發現 {len(all_semantic_edges)} 條連結 ---")
 
