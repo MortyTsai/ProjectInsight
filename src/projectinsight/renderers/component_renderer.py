@@ -113,6 +113,102 @@ def _create_html_label(
     return f'<<TABLE {table_attrs}><TR><TD ALIGN="LEFT" VALIGN="TOP">{content}</TD></TR></TABLE>>'
 
 
+def _create_legend_html(
+    layer_info: dict[str, dict[str, str]],
+    active_layer_keys: set[str],
+    has_internal_private: bool,
+    has_external: bool,
+    semantic_config: dict[str, Any],
+    active_semantic_labels: set[str],
+) -> str:
+    """
+    生成整合的圖例 HTML 表格。
+    """
+    font_face = 'FACE="Microsoft YaHei"'
+    font_tag_start = f'<FONT {font_face} POINT-SIZE="10">'
+    font_tag_end = "</FONT>"
+    header_font_start = f'<FONT {font_face} POINT-SIZE="10" COLOR="#333333">'
+
+    node_rows = []
+    node_rows.append(
+        f'<TR><TD COLSPAN="2" ALIGN="LEFT" VALIGN="TOP"><B>{header_font_start}組件類型{font_tag_end}</B></TD></TR>'
+    )
+
+    for key in sorted(active_layer_keys):
+        info = layer_info.get(key, {})
+        name = info.get("name", key)
+        color = info.get("color", "#FFFFFF")
+        node_rows.append(
+            f'<TR><TD BGCOLOR="{color}" WIDTH="16" HEIGHT="16" BORDER="1" FIXEDSIZE="TRUE"></TD>'
+            f'<TD ALIGN="LEFT">{font_tag_start}{name}{font_tag_end}</TD></TR>'
+        )
+
+    if has_internal_private:
+        node_rows.append(
+            f'<TR><TD BGCOLOR="#E0E0E0" WIDTH="16" HEIGHT="16" BORDER="1" STYLE="dashed" FIXEDSIZE="TRUE"></TD>'
+            f'<TD ALIGN="LEFT">{font_tag_start}內部私有{font_tag_end}</TD></TR>'
+        )
+    if has_external:
+        node_rows.append(
+            f'<TR><TD BGCOLOR="#FFFFFF" WIDTH="16" HEIGHT="16" BORDER="1" STYLE="dashed" FIXEDSIZE="TRUE"></TD>'
+            f'<TD ALIGN="LEFT">{font_tag_start}外部依賴{font_tag_end}</TD></TR>'
+        )
+
+    left_table = f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="4" CELLPADDING="0">{"".join(node_rows)}</TABLE>'
+
+    right_table = ""
+    if semantic_config.get("enabled", True) and active_semantic_labels:
+        link_rows = []
+        link_rows.append(
+            f'<TR><TD COLSPAN="2" ALIGN="LEFT" VALIGN="TOP"><B>{header_font_start}關係類型{font_tag_end}</B></TD></TR>'
+        )
+
+        link_styles = semantic_config.get("links", {})
+        style_map = {
+            "dashed": "- - - &gt;",
+            "dotted": "&middot; &middot; &gt;",
+            "bold": "&mdash;&mdash;&gt;",
+            "solid": "&mdash;&mdash;&gt;",
+        }
+        arrow_map = {"tee": "&mdash;|"}
+
+        for key in sorted(active_semantic_labels):
+            style = link_styles.get(key)
+            if not style:
+                continue
+            label_text = style.get("label", key)
+            color = style.get("color", "black")
+            line_style = style.get("style", "solid")
+            arrow = style.get("arrowhead")
+
+            line_symbol = style_map.get(line_style, "&mdash;&mdash;&gt;")
+            if arrow and arrow in arrow_map:
+                line_symbol = line_symbol.replace("&gt;", arrow_map[arrow])
+
+            link_rows.append(
+                f'<TR><TD ALIGN="RIGHT"><FONT COLOR="{color}">{line_symbol}</FONT></TD>'
+                f'<TD ALIGN="LEFT">{font_tag_start}{label_text}{font_tag_end}</TD></TR>'
+            )
+
+        right_table = f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="4" CELLPADDING="0">{"".join(link_rows)}</TABLE>'
+
+    if right_table:
+        combined_content = (
+            f"<TR>"
+            f'<TD VALIGN="TOP" CELLPADDING="8">{left_table}</TD>'
+            f'<TD WIDTH="1" BGCOLOR="#DDDDDD"></TD>'
+            f'<TD VALIGN="TOP" CELLPADDING="8">{right_table}</TD>'
+            f"</TR>"
+        )
+    else:
+        combined_content = f'<TR><TD VALIGN="TOP" CELLPADDING="8">{left_table}</TD></TR>'
+
+    return (
+        f'<TABLE BORDER="1" CELLBORDER="0" CELLSPACING="0" CELLPADDING="0" '
+        f'BGCOLOR="#FAFAFA" COLOR="#DDDDDD">{combined_content}</TABLE>'
+    )
+
+
 def render_component_graph(
     graph_data: dict[str, Any],
     output_path: Path,
@@ -139,24 +235,6 @@ def render_component_graph(
 
     dot = graphviz.Digraph("ComponentInteractionGraph")
     font_face = 'FACE="Microsoft YaHei"'
-    title = (
-        f'<<FONT {font_face} POINT-SIZE="20">{project_name} 高階組件互動圖 引擎: {layout_engine}</FONT><BR/>'
-        f'<FONT {font_face} POINT-SIZE="12">箭頭 A -&gt; B 表示 A 使用 B</FONT>>'
-    )
-
-    dot.attr(
-        fontname="Microsoft YaHei",
-        label=title,
-        charset="UTF-8",
-        compound="true",
-        nodesep="1.2",
-        ranksep="1.2",
-        splines="ortho",
-        packmode="graph",
-        pack="true",
-    )
-    dot.attr("node", style="filled", fontname="Arial", fontsize="11")
-    dot.attr("edge", color="gray50", arrowsize="0.7")
 
     nodes = graph_data.get("nodes", [])
     edges = graph_data.get("edges", [])
@@ -170,95 +248,57 @@ def render_component_graph(
 
     has_internal_private_nodes = False
     has_external_nodes = False
+    active_layer_keys = set()
     for node_fqn in nodes:
+        layer_key, _ = _get_node_layer_info(node_fqn, layer_info)
+        active_layer_keys.add(layer_key)
+
         if node_fqn not in high_level_components:
             if any(node_fqn.startswith(pkg) for pkg in context_packages):
                 has_internal_private_nodes = True
             else:
                 has_external_nodes = True
-        if has_internal_private_nodes and has_external_nodes:
-            break
 
-    with dot.subgraph(name="cluster_legends") as legends:
-        legends.attr(label="", color="none")
+    active_semantic_labels = {label for _, _, label in semantic_edges}
 
-        active_nodes_in_graph = set(nodes)
-        active_layer_keys = {_get_node_layer_info(node, layer_info)[0] for node in active_nodes_in_graph}
+    title_html = (
+        f'<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">'
+        f'<TR><TD><FONT {font_face} POINT-SIZE="24"><B>{project_name}</B></FONT></TD></TR>'
+        f'<TR><TD><FONT {font_face} POINT-SIZE="14">高階組件互動圖 (引擎: {layout_engine})</FONT></TD></TR>'
+        f"</TABLE>"
+    )
 
-        if layer_info and active_layer_keys:
-            with legends.subgraph(name="cluster_layer_legend") as layer_legend:
-                layer_legend.attr(label="節點樣式圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
-                font_tag_start = f'<FONT {font_face} POINT-SIZE="10">'
-                font_tag_end = "</FONT>"
-                legend_title = "<b>高階組件 (按層級著色)</b>"
-                legend_items = [f'<TR><TD ALIGN="LEFT">{font_tag_start}{legend_title}{font_tag_end}</TD></TR>']
-                for key in sorted(active_layer_keys):
-                    info = layer_info.get(key, {})
-                    name = info.get("name", key)
-                    color = info.get("color")
-                    if name and color:
-                        legend_items.append(
-                            f'<TR><TD BGCOLOR="{color}" ALIGN="LEFT">{font_tag_start}{name}{font_tag_end}</TD></TR>'
-                        )
+    legend_html = _create_legend_html(
+        layer_info,
+        active_layer_keys,
+        has_internal_private_nodes,
+        has_external_nodes,
+        semantic_config,
+        active_semantic_labels,
+    )
 
-                if has_internal_private_nodes:
-                    legend_items.append(
-                        f'<TR><TD BGCOLOR="#E0E0E0" ALIGN="LEFT" BORDER="1" STYLE="dashed" COLOR="#AAAAAA">'
-                        f"{font_tag_start}內部私有組件{font_tag_end}</TD></TR>"
-                    )
-                if has_external_nodes:
-                    legend_items.append(
-                        f'<TR><TD BGCOLOR="#FFFFFF" ALIGN="LEFT" BORDER="1" STYLE="dashed" COLOR="#888888">'
-                        f"{font_tag_start}外部依賴/契約{font_tag_end}</TD></TR>"
-                    )
+    header_html = (
+        f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="10">'
+        f"<TR><TD>{title_html}</TD></TR>"
+        f"<TR><TD>{legend_html}</TD></TR>"
+        f"</TABLE>>"
+    )
 
-                layer_legend.node(
-                    "layer_legend_table",
-                    label=f"<<TABLE BORDER='0' CELLBORDER='1' CELLSPACING='5'>{''.join(legend_items)}</TABLE>>",
-                    shape="plaintext",
-                )
-
-        active_semantic_labels = {label for _, _, label in semantic_edges}
-        if semantic_config.get("enabled", True) and active_semantic_labels:
-            with legends.subgraph(name="cluster_semantic_legend") as semantic_legend:
-                semantic_legend.attr(label="語義連結圖例", style="rounded", color="gray", fontname="Microsoft YaHei")
-
-                html_rows = []
-                link_styles = semantic_config.get("links", {})
-
-                style_map = {
-                    "dashed": "- - - &gt;",
-                    "dotted": "&middot; &middot; &middot; &gt;",
-                    "bold": "&mdash;&mdash;&mdash;&gt;",
-                }
-                arrow_map = {"tee": "&mdash;|"}
-
-                for key in sorted(active_semantic_labels):
-                    style = link_styles.get(key)
-                    if not style:
-                        continue
-
-                    label_text = style.get("label", key)
-                    color = style.get("color", "black")
-                    line_style = style.get("style", "solid")
-                    arrow = style.get("arrowhead")
-
-                    line_symbol = style_map.get(line_style, "&mdash;&mdash;&gt;")
-                    if arrow and arrow in arrow_map:
-                        line_symbol = line_symbol.replace("&gt;", arrow_map[arrow])
-
-                    html_rows.append(
-                        f'<TR><TD ALIGN="LEFT">{label_text}</TD>'
-                        f'<TD ALIGN="LEFT"><FONT COLOR="{color}">{line_symbol}</FONT></TD></TR>'
-                    )
-
-                if html_rows:
-                    legend_html = (
-                        '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="5" CELLPADDING="2">'
-                        + "".join(html_rows)
-                        + "</TABLE>>"
-                    )
-                    semantic_legend.node("semantic_legend_table", label=legend_html, shape="plaintext")
+    # 設定全域屬性
+    dot.attr(
+        label=header_html,
+        labelloc="t",
+        fontname="Microsoft YaHei",
+        charset="UTF-8",
+        compound="true",
+        nodesep="1",
+        ranksep="1",
+        splines="ortho",
+        packmode="graph",
+        pack="true",
+    )
+    dot.attr("node", style="filled", fontname="Arial", fontsize="11")
+    dot.attr("edge", color="gray50", arrowsize="0.7")
 
     graph = nx.DiGraph()
     graph.add_nodes_from(nodes)
@@ -293,7 +333,6 @@ def render_component_graph(
             try:
                 di_subgraph = cast(nx.DiGraph, subgraph)
                 node_sequence = list(nx.topological_sort(di_subgraph))
-                logging.debug(f"Component {i + 1}: 成功進行拓撲排序。")
             except nx.NetworkXUnfeasible:
                 logging.warning(f"Component {i + 1}: 檢測到環，降級為字母排序。")
                 node_sequence = sorted(component_nodes)
